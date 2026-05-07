@@ -1,87 +1,145 @@
-#' nam - A wrapper function for performing the different network autocorrelation
-#'  family of models
-#' @param formula an object of class "formula" (or one that can be coerced 
-#' to that class): a symbolic description of the model to be fitted. 
-#' @param data an optional data frame, list or environment (or object coercible 
-#' by as.data.frame to a data frame) containing the variables in the model. 
-#' If not found in data, the variables are taken from environment(formula), 
-#' typically the environment from which nam is called. You can also input an 
-#' igraph object and the dataset and adjacency matrix will be extracted for 
-#' you (in which case the network argument will be ignored). 
-#' @param network An adjacency matrix describing your network. Can be of the class:  
-#' c("matrix", "dgCMatrix", "igraph", "network") or an edgelist. 
-#' @param model A character indicating the model to be run. options are 
-#' c("effects", "disturbances", "NMR", "IV", "HA"). Run ?models.nam()
-#' for a more detailed explanation and citations on each method. 
-#' @param method A character indicating the method to use for simulation. 
-#' Options vary by model but all potential options are c("normal", 
-#' "greta", "stan", "lnam"). Run ?methods.nam() for model-specific designations. 
-#' @param rownorm A logical indicating whether the inputted adjacency matrix 
-#' should be row-normalized (TRUE). Ignored by certain models that require 
-#' normalization.
-#' @param ... Additional arguments that are method-specific. Run 
-#' ?args.nam() for a more detailed explanation on the different arguments for
-#' each method.   
-#' @return A list with two classes, the first being "nam" and the second is the 
-#' class of the method that contains values:
-#' @return \code{estimates} A list containing the estimates of the parameters 
-#' of the chosen method.
-#' @return \code{A} The adjacency matrix. Will be row-normalized if rownorm=TRUE.
-#' @return \code{loglik} The log of the likelihood of the model.
-#' @return \code{AIC} The Akaike Information Criterion of the model.
-#' @return \code{BIC} The Bayesian Information Criterion of the model.  
+#' nam - General Wrapper for Network Analysis Models
+#'
+#' A wrapper function for performing various models within the
+#' network autocorrelation family.
+#'
+#' @param formula An object of class \code{\link[stats]{formula}}: a symbolic
+#'   description of the model to be fitted.
+#' @param data An optional data frame, list, or environment. If \code{data} is an
+#'   \code{igraph} object, the variables and adjacency matrix are extracted
+#'   automatically (ignoring the \code{network} argument).
+#' @param network An adjacency matrix or network object. Supported classes include:
+#'   \code{matrix}, \code{dgCMatrix}, \code{igraph}, \code{network}, or an edgelist.
+#' @param model A character string specifying the model type. Options include:
+#'   \code{"effects"} (NEM), \code{"disturbances"} (NDM), \code{"nmr"}, \code{"iv"},
+#'   \code{"hane"}, and \code{"hand"}. See \code{?models.nam} for details and citations.
+#' @param method A character string specifying the estimation method. Options
+#'   are model specific but can potentially include \code{"normal"}
+#'   (Maximum Likelihood/Optimization), \code{"stan"}
+#'   (MCMC via Hamiltonian Monte Carlo), and \code{"lnam"}.
+#' @param rownorm Logical. If \code{TRUE} (default), the adjacency matrix will be
+#'   row-normalized. This may be ignored by models requiring specific normalization.
+#' @param ... Method-specific arguments passed to underlying estimation functions
+#'   (e.g., \code{rstan::sampling} or \code{stats::optim}).
+#'
+#' @return An object of class \code{c("nam", "subclass")}, containing:
+#' \describe{
+#'   \item{estimates}{A list of parameter estimates (beta, s2, rho) and estimation metadata.}
+#'   \item{formula}{The formula used in the model.}
+#'   \item{model}{The string identifier for the model type.}
+#'   \item{method}{The string identifier for the estimation method.}
+#'   \item{data}{A list containing the response, predictors, and adjacency matrix used.}
+#'   \item{priors}{The prior settings used (for Bayesian methods).}
+#'   \item{call}{The matched call.}
+#' }
+#'
+#' @seealso \code{\link{summary.nam}}, \code{\link{print.nam}}
 #' @export
 
-nam <- function(formula, data=NULL, network, model="effects", method="normal", 
-                rownorm=TRUE, ...){
-  
-  # Formatting the data.
-  if(class(data)=="igraph"){
-    df <- convert.adjacency(data)
+
+nam <- function(formula, data=NULL, network, model="effects", method="normal", rownorm=TRUE, ...){
+
+  # 1. Uniform Data Handling
+  # Convert network to matrix early so we don't have to do it inside every if-block
+  if(inherits(data, "igraph")){
+    df <- convert_adjacency(data, "matrix")
     data <- df$df
     network <- df$A
   }else{
-    network <- convert.adjacency(network)$A
-  }
-  
-  
-  # Wrapper to distinguish the model-specific cleaning and function call.
-  if(tolower(model)=="effects" | tolower(model)=="nem"){
-    if(rownorm){
-      network <- row.norm(network)
-    }
-    out <- nem(formula=formula, data=data, network=network, model=model, 
-                       method=method, rownorm=rownorm, ...)
-  }else if(tolower(model) == "disturbances" | tolower(model)=="ndm"){
-    if(rownorm){
-      network <- row.norm(network)
-    }
-    out <- ndm(formula=formula, data=data, network=network, model=model, 
-                       method=method, rownorm=rownorm, ...)
-  }else if(tolower(model) == "iv"){
-    if(rownorm){
-      network <- row.norm(network)
-    }
-    out <- iv(formula=formula, data=data, network=network, model=model, 
-                       method=method, rownorm=rownorm, ...)
-  }else if(tolower(model) == "nmr"){
-    network <- row.norm(network)
-    out <- nmr(formula=formula, data=data, A=network, model=model, 
-                       method=method, rownorm=rownorm, ...)
-  }else if(tolower(model) == "ha" | tolower(model) == "homopholy-adjusted"){
-    network <- row.norm(network)
-    out <- ha(formula=formula, data=data, network=network, model=model, 
-               method=method, rownorm=rownorm, ...)
-  }else{
-    stop("You did not give a valid model name.")
+    network <- convert_adjacency(network, "matrix")$A
   }
 
-  # Class assignment and output.
-  class(out) <- "nam"
+  # 2. Dispatch to specific model functions
+  # We use tolower() once to simplify the logic
+  mod <- tolower(model)
+
+  if(mod %in% c("effects", "nem")){
+    out <- nem(formula=formula, data=data, network=network, method=method, rownorm=rownorm, ...)
+
+  }else if(mod %in% c("disturbances", "ndm")){
+    out <- ndm(formula=formula, data=data, network=network, method=method, rownorm=rownorm, ...)
+
+  }else if(mod %in% c("iv")){
+    out <- iv(formula=formula, data=data, network=network, method=method, rownorm=rownorm, ...)
+
+  }else if(mod %in% c("nmr")){
+    out <- nmr(formula=formula, data=data, network=network, method=method, rownorm=rownorm, ...)
+
+  }else if(mod %in% c("hane", "homopholy-adjusted network effects")){
+    out <- hane(formula=formula, data=data, network=network, method=method, rownorm=rownorm, ...)
+
+  }else if(mod %in% c("hand", "homopholy-adjusted network disturbances")){
+    out <- hand(formula=formula, data=data, network=network, method=method, rownorm=rownorm, ...)
+
+  }else{
+    stop("You did not provide a valid model name. Options are: 'nem', 'ndm', 'iv', 'nmr', or 'ha'.")
+  }
+
   return(out)
 }
 
 
+#' Print method for nam objects
+#' @param x An object of class "nam"
+#' @param ... Additional arguments (ignored)
+#' @export
+print.nam <- function(x, ...) {
+  cat("\nNetwork Analysis Model (NAM)\n")
+  cat("----------------------------\n")
+  cat("Model Type: ", x$model, "\n")
+  cat("Method:     ", x$method, "\n")
+  cat("\nCall:\n")
+  print(x$call)
+
+  cat("\nCoefficients (Beta):\n")
+  # Pulling from your nested 'estimates' list
+  if (!is.null(x$estimates$beta)) {
+    print(round(x$estimates$beta, 4))
+  } else {
+    cat("Estimates not found in output.\n")
+  }
+
+  cat("\nNetwork Correlation (Rho):", round(x$estimates$rho, 4), "\n")
+  cat("Residual Variance (S2):   ", round(x$estimates$s2, 4), "\n")
+
+  cat("\n---\n")
+  cat("Use summary() for detailed statistics and p-values.\n")
+
+  invisible(x)
+}
+
+
+
+#' @export
+print.summary.nam <- function(x, ...) {
+  cat("\nSummary of Network Analysis Model\n")
+  cat("Model Type:", x$model, "| Estimation Method:", x$method, "\n")
+
+  cat("\nCall:\n")
+  print(x$call)
+
+  cat("\nParameter Estimates and Intervals:\n")
+  print(round(x$coefficients, 4))
+
+  cat("\nModel Fit Statistics:\n")
+  cat("Log-Likelihood: ", round(x$loglik, 4))
+
+  if(!is.null(x$logpost) && !is.na(x$logpost)) {
+    cat("\nLog-Posterior:  ", round(x$logpost, 4))
+  }
+
+  # Display Marginal Likelihood if available (from Importance Sampling)
+  if(!is.null(x$marg_lik) && !is.na(x$marg_lik)) {
+    cat("\nLog-Marginal-Lik:", round(x$marg_lik, 4))
+  }
+
+  if(!is.null(x$converged) && isFALSE(x$converged)) {
+    cat("\n\n*** WARNING: Optimization did not converge! ***\n")
+  }
+
+  cat("\n")
+  invisible(x)
+}
 
 
 

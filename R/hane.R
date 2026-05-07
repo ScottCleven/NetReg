@@ -11,7 +11,7 @@
 #' c("matrix", "dgCMatrix", "igraph", "network") or an edgelist.
 #' @param method A character indicating the method to use for simulation.
 #' Options vary by model but all potential options are c("normal",
-#' "greta", "stan", "lnam"). Run ?methods.nam() for model-specific designations.
+#' " ", "stan", "lnam"). Run ?methods.nam() for model-specific designations.
 #' @param Usample a sample of latent locations to use as priors; an array of
 #' size (size, n, D), where size is the number of sample, n is the number of
 #' nodes in the network, and D is the number of latent dimension.
@@ -24,8 +24,8 @@
 #' a single integer, it will multiply that integer by the identity matrix.
 #' Otherwise, both mean and sigma will be what you specify them to be. Or the
 #' user can specify their own prior function with which to input. If
-#' method="greta", the user-specified function must be a function from the
-#' greta package.
+#' method=" ", the user-specified function must be a function from the
+#'   package.
 #' @param gamma_prior The prior for the gamma vector of the model. Requires list
 #' or function inputs. Default is a multivariate normal with mean=0 and
 #' sigma=2.25^2. If you supply a list, you must have one element named
@@ -35,21 +35,21 @@
 #' a single integer, it will multiply that integer by the identity matrix.
 #' Otherwise, both mean and sigma will be what you specify them to be. Or the
 #' user can specify their own prior function with which to input. If
-#' method="greta", the user-specified function must be a function from the
-#' greta package.
+#' method=" ", the user-specified function must be a function from the
+#'   package.
 #' @param s2_prior Prior for the variance parameter. Requires list or function
 #' inputs. Defaults to a gamma(2,0.5). If Input is a list, the list must have
 #' two elements named 'shape' and 'scale' to represent the shape and scale of
 #' the gamma distribution respectively. Or the user can specify their own prior
-#' function with which to input. If method="greta", the user-specified function
-#' must be a function from the greta package.
+#' function with which to input. If method=" ", the user-specified function
+#' must be a function from the   package.
 #' @param rho_prior The prior for the correlation of the adjacency matrix of
 #' the model. Requires list or function inputs. Default is a N(0.36,0.49)
 #' (Dittrich et al. 2017). If input is a list, the list must have two elements
 #' named 'mean' and 'sd' which are the mean and standard deviation of the normal
 #' distribution respectively. Or the user can specify their own prior
-#' function with which to input. If method="greta", the user-specified function
-#' must be a function from the greta package. If method="stan" only list input
+#' function with which to input. If method=" ", the user-specified function
+#' must be a function from the   package. If method="stan" only list input
 #' will be accepted.
 #' @param Usample.maxiter a integer value indicating the maximum iteration used
 #' in approximating Usample with a matrix normal distribution.
@@ -70,116 +70,140 @@
 #' @return \code{AIC} The Akaike Information Criterion of the model.
 #' @return \code{BIC} The Bayesian Information Criterion of the model.
 #'
-#' @import greta
 #' @import mvtnorm
 #' @import rstan
-#' @import truncnorm
+#' @import Rcpp
+#' @importFrom truncnorm dtruncnorm
+#' @importFrom invgamma dinvgamma
+#' @importFrom sna lnam
+#' @importFrom rstan sampling
+#' @importFrom rstantools rstan_config
+#' @useDynLib nafm, .registration = TRUE
 #' @export
 
+hane <- function(formula, data=NULL, network, Usample, method,
+                 beta_prior = list(mean=0, sigma=2.25^2),
+                 gamma_prior = list(mean=0, sigma=2.25^2),
+                 s2_prior = list(shape=2, scale=2),
+                 rho_prior = list(mean=0.36, sd=0.7),
+                 rownorm=TRUE, ...){
 
-# Model-specific wrapper function to call different methods
-hane <- function(formula, data, network, method, Usample,
-                beta_prior = list(mean=0, sigma = 1),
-                gamma_prior=list(mean=0, sigma=2.25^2),
-                s2_prior = list(shape=2, scale=0.5),
-                rho_prior = list(mean=0.36, sd=0.7^2),
-                Usample.maxiter=100, Usample.eps=1e-8, init_vec=NULL,
-                ...){
+  # 1. Data Prep
+  X <- model.matrix(formula, data=data)
+  y <- model.frame(formula, data)[,1]
+  n <- NROW(y)
+  p <- NCOL(X)
+  A <- convert_adjacency(network, "matrix")$A
+  if(rownorm) A <- row_norm(A)
 
-  X = model.matrix(formula, data=data)
-  y = model.frame(formula, data)[,1]
-  n = NROW(y)
-  p = NCOL(X)
-  nUsamp = dim(Usample)[1]
-  D = dim(Usample)[3]
+  # 2. U-Matrix Approximation (Required for HANE)
+  # This uses the Uprior_appox logic from Pham & Sewell
+  Uapprox <- Uprior_appox(Usample)
+  D <- dim(Usample)[3]
 
-  # Check stan prior inputs are list only.
-  if(tolower(method)=="stan" && typeof(beta_prior) != "list" |
-     tolower(method)=="stan" && typeof(s2_prior) != "list" |
-     tolower(method)=="stan" && typeof(rho_prior) != "list"){
-    stop("stan method requires list input priors if you want to change the
-         priors using MCMC use method=\"greta\"")
-  }
+  # 3. Consolidate Data
+  hanedat <- list(y=y, X=X, A=A, p=p, n=n, D=D,
+                  Lambda=Uapprox$Lambda, Omega=Uapprox$Omega, Psi=Uapprox$Psi,
+                  beta_prior=beta_prior, gamma_prior=gamma_prior,
+                  s2_prior=s2_prior, rho_prior=rho_prior, ...)
 
-  # Check if U is an array
-  if(length(dim(Usample)) != 3 | dim(Usample)[2] != n){
-    stop("Error: Input of Usample not in the right array format (size, n, D)")
-  }
-
-  # Calculate matrix normal approximation to prior of U
-  Uapprox <- Uprior_appox(Usample, Usample.maxiter, Usample.eps)
-  if(!Uapprox$conv) stop('Approximation to Usample failed! Consider increasing
-                         Usample.maxiter or decreasing Usample.eps')
-  Lambda  <- Uapprox$Lambda
-  Omega   <- Uapprox$Omega
-  Psi     <- Uapprox$Psi
-
-
-  hanedat <- list(y=y, X=X, network=network, method=method, p=p, n=n, I=diag(n),
-                 Lambda=Lambda, Omega=Omega, Psi=Psi, D=D,
-                 beta_prior=beta_prior,
-                 gamma_prior=gamma_prior,
-                 s2_prior = s2_prior,
-                 rho_prior = rho_prior,
-                 ...)
-
-  if(tolower(method)=="normal"){
+  # 4. Dispatch
+  if(tolower(method) == "normal"){
     haneout <- hane_normal(hanedat)
-  }else if(tolower(method)=="greta"){
-    haneout <- hane_greta(hanedat)
   }else if(tolower(method)=="stan"){
-    haneout <- hane_stan(hanedat)
+    haneout <- hane_stan(nemdat)
+  }else if((tolower(method)=="is") | (tolower(method)=="importance sampling")){
+    haneout <- hane_IS(nemdat)
   }
-  haneout
+
+  # 5. Format Output (S3 classes)
+  final_out <- list(
+    estimates = haneout,
+    formula = formula,
+    model = "hane",
+    method = tolower(method),
+    data = list(y=y, X=X, network=A, Usample=Usample),
+    priors = list(beta=beta_prior, gamma=gamma_prior, s2=s2_prior, rho=rho_prior),
+    call = match.call()
+  )
+  class(final_out) <- c("nam", "hane")
+  return(final_out)
 }
 
+
 # Likelihood of the HANE model.
-hane_likelihood <- function(theta, A, y, X, Lambda, Omega, log=TRUE){
-
+hane_likelihood <- function(theta, A, y, X, Lambda, Omega, Psi, log=TRUE){
+  p <- NCOL(X)
+  D <- NCOL(Lambda)
   n <- NROW(y)
-  p <- length(beta)
-  I <- diag(n)
-  D <- ncol(Lambda)
 
+  # Extract parameters from theta
   beta <- theta[1:p]
   gamma <- theta[(p+1):(p+D)]
   s2 <- theta[p+D+1]
   rho <- theta[p+D+2]
 
+  I <- diag(n)
 
+  # The 'M' matrix (I - rho*A)^{-1}
+  M <- qr.solve(I - rho*A)
 
-  Launtif <- qr.solve(I - rho*A)
+  # Calculate the combined variance structure from the latent space approximation
+  gPg <- as.numeric(t(gamma) %*% Psi %*% gamma)
 
-  mvtnorn::dmvnorm(y,
-                   (Launtif %*% (X %*% beta + Lambda%*%gamma))[,1],
-                   as.matrix(Launtif%*%tcrossprod(crossprod(gamma)[1]*
-                                                    Omega + diag(s2, n),
-                                                  Launtif)),
-                   log = log)
+  # Total internal variance before the network transformation
+  Sigma_internal <- gPg * Omega + s2 * I
 
+  # The mean structure: M %*% (X %*% beta + Lambda %*% gamma)
+  mu_hane <- M %*% (X %*% beta + Lambda %*% gamma)
+
+  # The total covariance: M %*% Sigma_internal %*% M'
+  # We use tcrossprod(M %*% Sigma_internal, M) for efficiency
+  V_hane <- tcrossprod(M %*% Sigma_internal, M)
+
+  # Use mvtnorm for the likelihood calculation
+  mvtnorm::dmvnorm(y, mean = as.vector(mu_hane), sigma = V_hane, log = log)
 }
+
+
+
 
 # Posterior of the HANE model.
-hane_posterior <- function(theta, A, y, X, Lambda, Omega, log=TRUE){
+# Posterior of the HANE model
+hane_posterior <- function(theta, A, y, X, Lambda, Omega, Psi,
+                           bprior, gprior, s2prior, rhoprior, log=TRUE){
 
-  n <- NROW(y)
-  p <- length(beta)
-  I <- diag(n)
-  D <- ncol(Lambda)
+  p <- NCOL(X)
+  D <- NCOL(Lambda)
 
-  beta    <- theta[1:p]
-  gamma   <- theta[(p+1):(p+D)]
-  sigmasq <- theta[p+D+1]
-  rho     <- theta[p+D+2]
+  # Extract parameters for prior functions
+  beta <- theta[1:p]
+  gamma <- theta[(p+1):(p+D)]
+  s2 <- theta[p+D+1]
+  rho <- theta[p+D+2]
 
+  # 1. Calculate Log-Likelihood
+  # We force log=TRUE here to perform stable addition
+  ll <- hane_likelihood(theta, A, y, X, Lambda, Omega, Psi, log=TRUE)
 
-  out <- hane_likelihood(theta, A, y, X, Lambda, Omega, log=FALSE) *
-    bprior(beta) * gprior(gamma) * s2prior(s2) * rhoprior(rho)
-  if(log){
-    out <- log(out)
+  # 2. Calculate Log-Priors
+  # These are the functions created in the engine (normal or IS)
+  lp_beta  <- bprior(beta, log=TRUE)
+  lp_gamma <- gprior(gamma, log=TRUE)
+  lp_s2    <- s2prior(s2, log=TRUE)
+  lp_rho   <- rhoprior(rho, log=TRUE)
+
+  # 3. Combine
+  out <- ll + lp_beta + lp_gamma + lp_s2 + lp_rho
+
+  # If the user explicitly wants the raw probability (not recommended for HANE)
+  if(!log){
+    out <- exp(out)
   }
-  out
+
+  return(out)
 }
+
 
 # Function for approximating the prior for U
 Uprior_appox <- function(Usample, maxiter = 100, eps = 1e-8){
@@ -227,57 +251,61 @@ Uprior_appox <- function(Usample, maxiter = 100, eps = 1e-8){
 # Code for when method="normal"
 hane_normal <- function(hanedat){
 
-  # Checking Prior Inputs
-  if(typeof(hanedat$beta_prior) == "list"){
+  # 1. Prior Setup
+  if(is.list(hanedat$beta_prior)){
     if(length(hanedat$beta_prior$mean) == 1){
-      bmean <- rep(hanedat$beta_prior$mean,p)
+      b_mean <- rep(hanedat$beta_prior$mean, hanedat$p)
     }else{
-      bmean <- hanedat$beta_prior$mean
+      b_mean <- hanedat$beta_prior$mean
     }
-
-    if(length(hanedat$beta_prior$sigma) == 1){
-      bsigma <- diag(p) * hanedat$beta_prior$sigma
+    b_sigma <- if(length(hanedat$beta_prior$sigma) == 1){
+      b_sigma <- diag(hanedat$p) * hanedat$beta_prior$sigma
     }else{
-      bsigma <- hanedat$beta_prior$sigma
+      b_sigma <- hanedat$beta_prior$sigma
     }
-
-    bprior <- function(beta){
-      mvtnorm::dmvnorm(beta, bmean, bsigma)
-    }
+    bprior <- function(beta, log=TRUE){
+      mvtnorm::dmvnorm(beta, b_mean, b_sigma, log=log)
+      }
   }else{
     bprior <- hanedat$beta_prior
   }
 
-  if(typeof(hanedat$gamma_prior) == "list"){
+  # Gamma Prior (Latent Space Coefficients)
+  if(is.list(hanedat$gamma_prior)){
     if(length(hanedat$gamma_prior$mean) == 1){
-      gmean <- rep(hanedat$gamma_prior$mean,p)
+      g_mean <- rep(hanedat$gamma_prior$mean, hanedat$D)
     }else{
-      gmean <- hanedat$gamma_prior$mean
+      g_mean <- hanedat$gamma_prior$mean
     }
-
     if(length(hanedat$gamma_prior$sigma) == 1){
-      gsigma <- diag(p) * hanedat$gamma_prior$sigma
+      g_sigma <- diag(hanedat$D) * hanedat$gamma_prior$sigma
     }else{
-      gsigma <- hanedat$gamma_prior$sigma
+      g_sigma <- hanedat$gamma_prior$sigma
     }
-
-    gprior <- function(gamma){
-      mvtnorm::dmvnorm(gamma, gmean, gsigma)
-    }
+    gprior <- function(gamma, log=TRUE){
+      mvtnorm::dmvnorm(gamma, g_mean, g_sigma, log=log)
+      }
   }else{
     gprior <- hanedat$gamma_prior
   }
 
-  if(typeof(hanedat$s2_prior) == "list"){
-    s2prior <- function(s2){
-      dgamma(hanedat$s2_prior$shape, hanedat$s2_prior$scale)
+  # S2 Prior
+  if(is.list(hanedat$s2_prior)){
+    s2prior <- function(s2, log=TRUE){
+      out <- invgamma::dinvgamma(s2, hanedat$s2_prior$shape, hanedat$s2_prior$scale)
+      if(log){
+        return(log(out))
+      }else{
+        return(out)
+      }
     }
   }else{
     s2prior <- hanedat$s2_prior
   }
 
-  if(typeof(hanedat$rho_prior) == "list"){
-    rhoprior <- function(rho){
+  # Rho Prior
+  if(is.list(hanedat$rho_prior)){
+    rhoprior <- function(rho, log=TRUE){
       truncnorm::dtruncnorm(rho, a=-1, b=1, mean=hanedat$rho_prior$mean,
                             sd=hanedat$rho_prior$sd)
     }
@@ -285,164 +313,215 @@ hane_normal <- function(hanedat){
     rhoprior <- hanedat$rho_prior
   }
 
+  # 2. Initialization (2SLS to get the optimizer in the ballpark)
+  fit2sls <- lnam2sls_effect(hanedat$y, cbind(hanedat$X, hanedat$Lambda),
+                             hanedat$A)
+  # par structure: [beta, gamma, s2, rho]
+  init_vec <- c(fit2sls$coefs[1:(hanedat$p + hanedat$D)], fit2sls$s2,
+                fit2sls$coefs[hanedat$p + hanedat$D + 1])
 
-  # Checking if additional Arguments were input
-  if(!is.null(hanedat$gr)){
-    gr=hanedat$gr
-  }else{
-    gr=NULL
-  }
-
-  if(!is.null(hanedat$lower)){
-    lower = hanedat$lower
-  }else{
-    lower=c(rep(-Inf, hanedat$p+hanedat$D), 1e-5,  -0.999)
-  }
-
-  if(!is.null(hanedat$upper)){
-    upper = hanedat$upper
-  }else{
-    upper=c(rep(Inf, hanedat$p+hanedat$D+1), 0.999)
-  }
-
-  if(!is.null(hanedat$control)){
-    control=hanedat$control
-  }else{
-    control=c(list(fnscale=-1), optim.control)
-  }
-
-  # Finding good initial values
-  if(is.null(init_vec)){
-    fit2sls  <- lnam2sls_effect(hanedat$y, cbind(hanedat$X, hanedat$Lambda),
-                                hanedat$network)
-    init_vec <- c(fit2sls$coefs[1:(p+D)], fit2sls$s2, fit2sls$coefs[p+D+1])
-  }
-
-  # Finding posterior estimates using the normal approximation of the posterior
-  myopt <- optim(init_vec,
-                 fn=hane_posterior,
+  # 3. Optimization
+  # We use L-BFGS-B to enforce the -1 to 1 constraint on rho and >0 on s2
+  myopt <- optim(par = init_vec,
+                 fn = hane_posterior,
                  method = "L-BFGS-B",
-                 control=control,
-                 hessian = T,
-                 lower=lower, upper=upper,
-                 y=hanedat$y, X=hanedat$X, A=hanedat$A,
-                 Lambda=hanedat$Lambda, Omega=hanedat$Omega, Psi=hanedat$Psi,
-                 ...)
+                 lower = c(rep(-Inf, hanedat$p + hanedat$D), 1e-5, -0.999),
+                 upper = c(rep(Inf, hanedat$p + hanedat$D + 1), 0.999),
+                 control = list(fnscale = -1),
+                 hessian = TRUE,
+                 y = hanedat$y, X = hanedat$X, A = hanedat$A,
+                 Lambda = hanedat$Lambda, Omega = hanedat$Omega, Psi = hanedat$Psi,
+                 bprior = bprior, gprior = gprior, s2prior = s2prior, rhoprior = rhoprior)
 
-  # Outputting the results
-  list(beta = myopt$par[1:hanedat$p], s2 = myopt$par[hanedat$p + 1],
-       rho = myopt$par[hanedat$p + 2], network = hanedat$network,
-       H = myopt$hessian, Hinv = qr.solve(myopt$hessian), logpost = myopt$value,
-       loglik = hane_likelihood(myopt$par, hanedat$network, hanedat$y, hanedat$X),
-       y = hanedat$y, X = hanedat$X, method="normal", model="effects")
-
+  # 4. Output formatting
+  list(
+    beta = myopt$par[1:hanedat$p],
+    gamma = myopt$par[(hanedat$p + 1):(hanedat$p + hanedat$D)],
+    s2 = myopt$par[hanedat$p + hanedat$D + 1],
+    rho = myopt$par[hanedat$p + hanedat$D + 2],
+    hessian = myopt$hessian,
+    loglik = hane_likelihood(myopt$par, hanedat$A, hanedat$y, hanedat$X,
+                             hanedat$Lambda, hanedat$Omega, hanedat$Psi),
+    logpost = myopt$value,
+    converged = (myopt$convergence == 0)
+  )
 }
 
-# Code for when method="greta"
-hane_greta <- function(hanedat){
-  # Checking/Creating Priors
-  if(typeof(hanedat$beta_prior) == "list"){
+# Code for when method="IS"
+hane_IS <- function(hanedat) {
+  if(is.null(hanedat$samples)) hanedat$samples <- 10000
+  S <- hanedat$samples
+  p <- hanedat$p
+  D <- hanedat$D
+
+  # 1. Sample from Priors (Proposal Distribution)
+
+  # Beta
+  if(is.list(hanedat$beta_prior)) {
     if(length(hanedat$beta_prior$mean) == 1){
-      bmean <- rep(hanedat$beta_prior$mean,hanedat$p)
+      b_mu <- rep(hanedat$beta_prior$mean, p)
     }else{
-      bmean <- hanedat$beta_prior$mean
+      b_mu <- hanedat$beta_prior$mean
     }
-
     if(length(hanedat$beta_prior$sigma) == 1){
-      bsigma <- diag(hanedat$p) * hanedat$beta_prior$sigma
+      b_sig <- diag(p) * hanedat$beta_prior$sigma
     }else{
-      bsigma <- hanedat$beta_prior$sigma
+      b_sig <- hanedat$beta_prior$sigma
     }
-
-    bprior <- function(beta){
-      beta = greta::multivariate_normal(matrix(bmean, nrow = 1), bsigma)
+    beta_samples <- mvtnorm::rmvnorm(S, b_mu, b_sig)
+    bprior <- function(beta, log=TRUE){
+      mvtnorm::dmvnorm(beta, b_mu, b_sig, log=log)
     }
   }else{
-    beta = hanedat$beta_prior
+    stop("Importance sampling requires list-based priors for HANE.")
   }
 
-  if(typeof(hanedat$gamma_prior) == "list"){
+  # Gamma (Latent space coefficients)
+  if(is.list(hanedat$gamma_prior)){
     if(length(hanedat$gamma_prior$mean) == 1){
-      gmean <- rep(hanedat$gamma_prior$mean,hanedat$D)
+      g_mu <- rep(hanedat$gamma_prior$mean, D)
     }else{
-      gmean <- hanedat$gamma_prior$mean
+      g_mu <- hanedat$gamma_prior$mean
     }
-
     if(length(hanedat$gamma_prior$sigma) == 1){
-      gsigma <- diag(hanedat$D) * hanedat$gamma_prior$sigma
+      g_sig <- diag(D) * hanedat$gamma_prior$sigma
     }else{
-      gsigma <- hanedat$gamma_prior$sigma
+      g_sig <- hanedat$gamma_prior$sigma
     }
-
-    gprior <- function(gamma){
-      gamma = greta::multivariate_normal(matrix(gmean, nrow = 1), gsigma)
+    gamma_samples <- mvtnorm::rmvnorm(S, g_mu, g_sig)
+    gprior <- function(gamma, log=TRUE){
+      mvtnorm::dmvnorm(gamma, g_mu, g_sig, log=log)
     }
   }else{
-    gamma = hanedat$gamma_prior
+    stop("Importance sampling requires list-based priors for HANE.")
   }
 
-
-  if(typeof(hanedat$s2_prior) == "list"){
-    s2 = greta::gamma(2, 2)
-  }else{
-    s2 =  hanedat$s2_prior
+  # S2 (Variance)
+  s2_samples <- invgamma::rinvgamma(S, hanedat$s2_prior$shape,
+                                    hanedat$s2_prior$scale)
+  s2prior <- function(s2, log=TRUE){
+    out <- invgamma::dinvgamma(s2, hanedat$s2_prior$shape,
+                               hanedat$s2_prior$scale)
+    if(log){
+      log(out)
+    }else{
+      out
+    }
   }
 
-  if(typeof(hanedat$rho_prior) == "list"){
-    rho = greta::normal(0.36, 0.7^2, truncation = c(-1,1))
-  }else{
-    rho = hanedat$rho_prior
+  # Rho (Network Correlation)
+  rho_samples <- truncnorm::rtruncnorm(S, a = -1, b = 1,
+                                       mean = hanedat$rho_prior$mean,
+                                       sd = hanedat$rho_prior$sd)
+  rhoprior <- function(rho, log=TRUE){
+    truncnorm::dtruncnorm(rho, a=-1, b=1, mean=hanedat$rho_prior$mean,
+                          sd=hanedat$rho_prior$sd, log=log)
   }
 
-
-  # Checking if additional Arguments were input
-  if(!is.null(hanedat$n_samples)){
-    n_samples=hanedat$n_samples
-  }else{
-    n_samples=5000
+  # 2. Calculate Importance Weights (Log-Likelihood)
+  log_weights <- numeric(S)
+  for(i in 1:S) {
+    theta <- c(beta_samples[i,], gamma_samples[i,], s2_samples[i],
+               rho_samples[i])
+    log_weights[i] <- hane_likelihood(theta, hanedat$A, hanedat$y, hanedat$X,
+                                      hanedat$Lambda, hanedat$Omega,
+                                      hanedat$Psi, log = TRUE)
   }
 
-  if(!is.null(hanedat$chains)){
-    chains = hanedat$chains
-  }else{
-    chains=4
-  }
+  # 3. Resample using Log-Sum-Exp Trick
+  max_log_w <- max(log_weights)
+  weights <- exp(log_weights - max_log_w)
+  weights <- weights / sum(weights)
 
-  if(!is.null(hanedat$one_by_one)){
-    one_by_one=hanedat$one_by_one
-  }else{
-    one_by_one=TRUE
-  }
+  indices <- sample(1:S, size = S, replace = TRUE, prob = weights)
 
-  if(!is.null(hanedat$initial_values)){
-    initial_values=hanedat$initial_values
-  }else{
-    initial_values=greta::initials(s2=1, rho=0.36)
-  }
+  # Extract resampled parameters
+  resampled_beta <- beta_samples[indices, ]
+  resampled_gamma <- gamma_samples[indices, ]
+  resampled_s2 <- s2_samples[indices]
+  resampled_rho <- rho_samples[indices]
 
-  # set likelihood
-  Launtif <- solve(hanedat$I - rho * hanedat$network)
-  mu <- Launtif %*% hanedat$X %*% beta
-  Sigma <- s2*Launtif %*% t(Launtif)
-  y <- t(matrix(hanedat$y, ncol = 1))
-  greta::distribution(y) <- greta::multivariate_normal(
-    mean = t(mu),
-    Sigma = Sigma,
-    dimension = NROW(hanedat$n))
+  theta_mean <- c(colMeans(resampled_beta), colMeans(resampled_gamma),
+                  mean(resampled_s2), mean(resampled_rho))
 
-  # Run model and get draws
-  m <- greta::model(beta, s2, rho)
-
-  draws <- greta::mcmc(m, n_samples=n_samples, chains=chains,
-                       one_by_one = one_by_one, initial_values = initial_values)
-  draws
-
+  # 4. Format Output
+  list(
+    beta = colMeans(resampled_beta),
+    gamma = colMeans(resampled_gamma),
+    s2 = mean(resampled_s2),
+    rho = mean(resampled_rho),
+    samples = list(beta = resampled_beta, gamma = resampled_gamma,
+                   s2 = resampled_s2, rho = resampled_rho),
+    logpost = hane_posterior(theta_mean, hanedat$A, hanedat$y, hanedat$X,
+                             hanedat$Lambda, hanedat$Omega, hanedat$Psi,
+                             bprior, gprior, s2prior, rhoprior),
+    loglik = hane_likelihood(theta_mean, hanedat$A, hanedat$y, hanedat$X,
+                             hanedat$Lambda, hanedat$Omega, hanedat$Psi,
+                             log=TRUE),
+    log_marginal_lik = max_log_w + log(mean(exp(log_weights - max_log_w))),
+    converged = TRUE
+  )
 }
+
+
+
 
 # Code for when method="stan"
-hane_stan <- function(hanedat){
+hane_stan <- function(hanedat) {
+  if(!requireNamespace("rstan", quietly = TRUE)){
+    stop("rstan is required.")
+  }
 
+  # Set defaults for MCMC
+  if(is.null(hanedat$iterations)){
+    iters <- 2000
+  }else{
+    iters <- hanedat$iterations
+  }
+  if(is.null(hanedat$chains)){
+    chains <- 4
+  }else{
+    chains <- hanedat$chains
+  }
+
+  # Prepare prior vectors/matrices
+  if(length(hanedat$beta_prior$mean) == 1){
+    b_mu <- rep(hanedat$beta_prior$mean, hanedat$p)
+  }else{
+    b_mu <- as.vector(hanedat$beta_prior$mean)
+  }
+  if(length(hanedat$beta_prior$sigma) == 1){
+    b_sig <- diag(hanedat$p) * hanedat$beta_prior$sigma
+  }else{
+    b_sig <- as.matrix(hanedat$beta_prior$sigma)
+  }
+
+  if(length(hanedat$gamma_prior$mean) == 1){
+    g_mu <- rep(hanedat$gamma_prior$mean, hanedat$D)
+  }else{
+    g_mu <- as.vector(hanedat$gamma_prior$mean)
+  }
+  if(length(hanedat$gamma_prior$sigma) == 1){
+    g_sig <- diag(hanedat$D) * hanedat$gamma_prior$sigma
+  }else{
+    g_sig <- as.matrix(hanedat$gamma_prior$sigma)
+  }
+
+  stan_data <- list(
+    N = hanedat$n, K = hanedat$p, D = hanedat$D,
+    y = hanedat$y, X = hanedat$X, A = hanedat$A,
+    Lambda = hanedat$Lambda, Omega = hanedat$Omega, Psi = hanedat$Psi,
+    b_mean = b_mu, b_sigma = b_sig,
+    g_mean = g_mu, g_sigma = g_sig,
+    s2_shape = hanedat$s2_prior$shape, s2_scale = hanedat$s2_prior$scale,
+    rho_mean = hanedat$rho_prior$mean, rho_sd = hanedat$rho_prior$sd
+  )
+
+  fit <- rstan::sampling(stanmodels$hane_model, data = stan_data,
+                         iter = iters, chains = chains)
+  return(fit)
 }
+
 
 
 lnam2sls_effect = function(y,X,A){
@@ -463,3 +542,112 @@ lnam2sls_effect = function(y,X,A){
 
   return(list(coefs=Coefs,s2=s2Hat))
 }
+
+
+
+#' Summary method for HANE objects
+#' @export
+summary.hane <- function(object, probs = c(0.025, 0.975), ...){
+  p <- ncol(object$data$X)
+  D <- ncol(object$data$Usample) # Dimensions of latent space
+  prob_names <- paste0(probs * 100, "%")
+
+  if(object$method == "stan"){
+    s_mat <- rstan::summary(object$estimates, probs = probs)$summary
+
+    # Identify indices for HANE parameters
+    beta_idx  <- grep("^beta\\[", rownames(s_mat))
+    gamma_idx <- grep("^gamma\\[", rownames(s_mat))
+    s2_idx    <- which(rownames(s_mat) == "s2")
+    rho_idx   <- which(rownames(s_mat) == "rho")
+
+    coef_table <- s_mat[c(beta_idx, gamma_idx, s2_idx, rho_idx),
+                        c("mean", prob_names)]
+
+    # Labeling
+    rownames(coef_table)[1:p] <- colnames(object$data$X)
+    rownames(coef_table)[(p+1):(p+D)] <- paste0("gamma_", 1:D)
+
+    logpost_val <- mean(rstan::extract(object$estimates, "lp__")$lp__)
+    theta_star <- as.numeric(s_mat[c(beta_idx, gamma_idx, s2_idx, rho_idx),
+                                   "mean"])
+    loglik_val <- hane_likelihood(theta_star, object$data$network,
+                                  object$data$y,
+                                  object$data$X, object$estimates$Lambda,
+                                  object$estimates$Omega, object$estimates$Psi)
+
+  }else if(object$method %in% c("importance", "is")){
+    samples <- object$estimates$samples
+    # Combine samples: Beta, Gamma, Sigma2, Rho
+    theta_samples <- cbind(samples$beta, samples$gamma, sigma2 = samples$s2,
+                           rho = samples$rho)
+
+    coef_table <- t(apply(theta_samples, 2, function(x){
+      c(Estimate = mean(x), quantile(x, probs = probs))
+    }))
+
+    rownames(coef_table)[1:p] <- colnames(object$data$X)
+    rownames(coef_table)[(p+1):(p+D)] <- paste0("gamma_", 1:D)
+
+    loglik_val <- object$estimates$loglik
+    logpost_val <- object$estimates$logpost
+    marg_lik <- object$estimates$log_marginal_lik
+
+  }else{
+    # Normal Approximation / L-BFGS-B
+    theta_star <- c(object$estimates$beta, object$estimates$gamma,
+                    object$estimates$s2, object$estimates$rho)
+
+    # Robust Hessian inversion using your established tryCatch pattern
+    hinv <- tryCatch(solve(-object$estimates$hessian),
+                     error = function(e) matrix(NA, length(theta_star),
+                                                length(theta_star)))
+
+    # Ensure no negative variances before sqrt
+    std_errs <- sqrt(pmax(0, diag(hinv)))
+
+    z_crit <- qnorm(probs)
+    intervals <- matrix(NA, nrow = length(theta_star), ncol = length(probs))
+    for(i in 1:length(probs)) {
+      intervals[,i] <- theta_star + z_crit[i] * std_errs
+    }
+
+    coef_table <- cbind(Estimate = theta_star, intervals)
+    colnames(coef_table) <- c("Estimate", prob_names)
+
+    # Labeling
+    rownames(coef_table) <- c(colnames(object$data$X), paste0("gamma_", 1:D),
+                              "sigma2", "rho")
+
+    loglik_val <- object$estimates$loglik
+    logpost_val <- object$estimates$logpost
+  }
+
+  res <- list(
+    call = object$call,
+    coefficients = coef_table,
+    loglik = loglik_val,
+    logpost = logpost_val,
+    model = "HANE (Homophily-Adjusted)",
+    method = object$method,
+    converged = if(object$method == "normal") object$estimates$converged else TRUE
+  )
+  class(res) <- "summary.nam"
+  return(res)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -2,8 +2,7 @@
 % Please edit documentation in R/nam.R
 \name{nam}
 \alias{nam}
-\title{nam - A wrapper function for performing the different network autocorrelation
-family of models}
+\title{nam - General Wrapper for Network Analysis Models}
 \usage{
 nam(
   formula,
@@ -16,51 +15,47 @@ nam(
 )
 }
 \arguments{
-\item{formula}{an object of class "formula" (or one that can be coerced
-to that class): a symbolic description of the model to be fitted.}
+\item{formula}{An object of class \code{\link[stats]{formula}}: a symbolic
+description of the model to be fitted.}
 
-\item{data}{an optional data frame, list or environment (or object coercible
-by as.data.frame to a data frame) containing the variables in the model.
-If not found in data, the variables are taken from environment(formula),
-typically the environment from which nam is called. You can also input an
-igraph object and the dataset and adjacency matrix will be extracted for
-you (in which case the network argument will be ignored).}
+\item{data}{An optional data frame, list, or environment. If \code{data} is an
+\code{igraph} object, the variables and adjacency matrix are extracted
+automatically (ignoring the \code{network} argument).}
 
-\item{network}{An adjacency matrix describing your network. Can be of the class:
-c("matrix", "dgCMatrix", "igraph", "network") or an edgelist.}
+\item{network}{An adjacency matrix or network object. Supported classes include:
+\code{matrix}, \code{dgCMatrix}, \code{igraph}, \code{network}, or an edgelist.}
 
-\item{model}{A character indicating the model to be run. options are
-c("effects", "disturbances", "NMR", "IV", "HA"). Run ?models.nam()
-for a more detailed explanation and citations on each method.}
+\item{model}{A character string specifying the model type. Options include:
+\code{"effects"} (NEM), \code{"disturbances"} (NDM), \code{"nmr"}, \code{"iv"},
+\code{"hane"}, and \code{"hand"}. See \code{?models.nam} for details and citations.}
 
-\item{method}{A character indicating the method to use for simulation.
-Options vary by model but all potential options are c("normal",
-"greta", "stan", "lnam"). Run ?methods.nam() for model-specific designations.}
+\item{method}{A character string specifying the estimation method. Options
+are model specific but can potentially include \code{"normal"}
+(Maximum Likelihood/Optimization), \code{"stan"}
+(MCMC via Hamiltonian Monte Carlo), and \code{"lnam"}.}
 
-\item{rownorm}{A logical indicating whether the inputted adjacency matrix
-should be row-normalized (TRUE). Ignored by certain models that require
-normalization.}
+\item{rownorm}{Logical. If \code{TRUE} (default), the adjacency matrix will be
+row-normalized. This may be ignored by models requiring specific normalization.}
 
-\item{...}{Additional arguments that are method-specific. Run
-?args.nam() for a more detailed explanation on the different arguments for
-each method.}
+\item{...}{Method-specific arguments passed to underlying estimation functions
+(e.g., \code{rstan::sampling} or \code{stats::optim}).}
 }
 \value{
-A list with two classes, the first being "nam" and the second is the
-class of the method that contains values:
-
-\code{estimates} A list containing the estimates of the parameters
-of the chosen method.
-
-\code{A} The adjacency matrix. Will be row-normalized if rownorm=TRUE.
-
-\code{loglik} The log of the likelihood of the model.
-
-\code{AIC} The Akaike Information Criterion of the model.
-
-\code{BIC} The Bayesian Information Criterion of the model.
+An object of class \code{c("nam", "subclass")}, containing:
+\describe{
+\item{estimates}{A list of parameter estimates (beta, s2, rho) and estimation metadata.}
+\item{formula}{The formula used in the model.}
+\item{model}{The string identifier for the model type.}
+\item{method}{The string identifier for the estimation method.}
+\item{data}{A list containing the response, predictors, and adjacency matrix used.}
+\item{priors}{The prior settings used (for Bayesian methods).}
+\item{call}{The matched call.}
+}
 }
 \description{
-nam - A wrapper function for performing the different network autocorrelation
-family of models
+A wrapper function for performing various models within the
+network autocorrelation family.
+}
+\seealso{
+\code{\link{summary.nam}}, \code{\link{print.nam}}
 }

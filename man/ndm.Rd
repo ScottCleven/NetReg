@@ -12,6 +12,7 @@ ndm(
   beta_prior = list(mean = 0, sigma = 1),
   s2_prior = list(shape = 2, scale = 0.5),
   rho_prior = list(mean = 0.36, sd = 0.7^2),
+  rownorm = TRUE,
   ...
 )
 }
@@ -30,8 +31,8 @@ you (in which case the network argument will be ignored).}
 c("matrix", "dgCMatrix", "igraph", "network") or an edgelist.}
 
 \item{method}{A character indicating the method to use for simulation.
-Options vary by model but all potential options are c("normal",
-"greta", "stan", "lnam"). Run ?methods.nam() for model-specific designations.}
+Options vary by model but all potential options are c("normal", "IS",
+"stan", "lnam"). Run ?methods.nam() for model-specific designations.}
 
 \item{beta_prior}{The prior for the beta vector of the model. Requires list
 or function inputs. Default is a multivariate normal with mean=0 and sigma=1
@@ -42,42 +43,45 @@ that mean will be used for every element in the mean vector and if sigma is
 a single integer, it will multiply that integer by the identity matrix.
 Otherwise, both mean and sigma will be what you specify them to be. Or the
 user can specify their own prior function with which to input. If
-method="greta", the user-specified function must be a function from the
-greta package.}
+method="stan" only list input will be accepted.}
 
 \item{s2_prior}{Prior for the variance parameter. Requires list or function
 inputs. Defaults to a gamma(2,0.5). If Input is a list, the list must have
 two elements named 'shape' and 'scale' to represent the shape and scale of
 the gamma distribution respectively. Or the user can specify their own prior
-function with which to input. If method="greta", the user-specified function
-must be a function from the greta package.}
+function with which to input. If method="stan" only list input
+will be accepted.}
 
 \item{rho_prior}{The prior for the correlation of the adjacency matrix of
 the model. Requires list or function inputs. Default is a N(0.36,0.49)
 (Dittrich et al. 2017). If input is a list, the list must have two elements
 named 'mean' and 'sd' which are the mean and standard deviation of the normal
 distribution respectively. Or the user can specify their own prior
-function with which to input. If method="greta", the user-specified function
-must be a function from the greta package. If method="stan" only list input
+function with which to input. If method="stan" only list input
 will be accepted.}
+
+\item{rownorm}{Default to TRUE. Will row-normalize the adjacency matrix.}
 
 \item{...}{Additional arguments to be passed into the optim() function for
 when method="normal".}
 }
 \value{
 A list with two classes, the first being "nam" and the second is the
-class of the method that contains values:
+class of "disturbances" that contains values:
 
-\code{estimates} A list containing the estimates of the parameters
-of the chosen method.
+\code{estimates} The raw estimate output of the chosen method.
 
-\code{A} The adjacency matrix. Will be row-normalized if rownorm=TRUE.
+\code{formula} The inputted formula
 
-\code{loglik} The log of the likelihood of the model.
+\code{model} The chosen model ("disturbances").
 
-\code{AIC} The Akaike Information Criterion of the model.
+\code{method} The chosen method.
 
-\code{BIC} The Bayesian Information Criterion of the model.
+\code{data} The inputted data of the form list(y,X,network).
+
+\code{priors} The inputted prior settings/functions.
+
+\code{call} The match.call() of what was inputted.
 }
 \description{
 ndm - A function to perform the Network Disturbances Model

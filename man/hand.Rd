@@ -31,7 +31,7 @@ c("matrix", "dgCMatrix", "igraph", "network") or an edgelist.}
 
 \item{method}{A character indicating the method to use for simulation.
 Options vary by model but all potential options are c("normal",
-"greta", "stan", "lnam"). Run ?methods.nam() for model-specific designations.}
+" ", "stan", "lnam"). Run ?methods.nam() for model-specific designations.}
 
 \item{beta_prior}{The prior for the beta vector of the model. Requires list
 or function inputs. Default is a multivariate normal with mean=0 and sigma=1
@@ -42,23 +42,23 @@ that mean will be used for every element in the mean vector and if sigma is
 a single integer, it will multiply that integer by the identity matrix.
 Otherwise, both mean and sigma will be what you specify them to be. Or the
 user can specify their own prior function with which to input. If
-method="greta", the user-specified function must be a function from the
-greta package.}
+method=" ", the user-specified function must be a function from the
+package.}
 
 \item{s2_prior}{Prior for the variance parameter. Requires list or function
 inputs. Defaults to a gamma(2,0.5). If Input is a list, the list must have
 two elements named 'shape' and 'scale' to represent the shape and scale of
 the gamma distribution respectively. Or the user can specify their own prior
-function with which to input. If method="greta", the user-specified function
-must be a function from the greta package.}
+function with which to input. If method=" ", the user-specified function
+must be a function from the   package.}
 
 \item{rho_prior}{The prior for the correlation of the adjacency matrix of
 the model. Requires list or function inputs. Default is a N(0.36,0.49)
 (Dittrich et al. 2017). If input is a list, the list must have two elements
 named 'mean' and 'sd' which are the mean and standard deviation of the normal
 distribution respectively. Or the user can specify their own prior
-function with which to input. If method="greta", the user-specified function
-must be a function from the greta package. If method="stan" only list input
+function with which to input. If method=" ", the user-specified function
+must be a function from the   package. If method="stan" only list input
 will be accepted.}
 
 \item{...}{Additional arguments to be passed into the optim() function for

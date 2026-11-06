@@ -1,0 +1,606 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Journal Article
+% LaTeX Template
+% Version 2.0 (February 7, 2023)
+%
+% This template originates from:
+% https://latextemplates.com
+%
+% Author:
+% Vel (vel@latextemplates.com)
+%
+% License:
+% CC BY-NC-SA 4.0 (https://creativecommons.org)
+%
+% NOTE: The bibliography needs to be compiled using the biber engine.
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[
+	a4paper, % Paper size, use either a4paper or letterpaper
+	10pt, % Default font size, can also use 11pt or 12pt, although this is not recommended
+	unnumberedsections, % Comment to enable section numbering
+	twoside, % Two side traditional mode where headers and footers change between odd and even pages, comment this option to make them fixed
+]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{tablefootnote}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage{graphicx}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[margin=1in]{geometry}
+
+\def\dan#1{{\color{Emerald}Dan: #1}}
+
+\setcounter{page}{1} % The page number of the first page, set this to a higher number if the article is to be part of an issue or larger work
+
+%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Sweave / knitr Package Vignette Specifications
+%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% \VignetteIndexEntry{NetReg: An R Package for Network Regression Models}
+%% \VignetteEngine{knitr::rmarkdown}
+%% \VignetteEncoding{UTF-8}
+%----------------------------------------------------------------------------------------
+%	TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\title{\texttt{NetReg}: An \texttt{R} Package for Network Regression Models}
+
+\author{%
+	Scott A. Cleven and Daniel K. Sewell
+}
+
+\date{\footnotesize Department of Biostatistics, The University of Iowa}
+
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+\maketitle % Output the title section
+
+%% Global R options chunk for knitr
+<<setup, include=FALSE, cache=FALSE>>=
+library(knitr)
+opts_chunk$set(
+    fig.align = 'center',
+    fig.width = 6,
+    fig.height = 4,
+    dev = 'pdf',
+    echo = TRUE,
+    warning = FALSE,
+    message = FALSE
+)
+@
+
+%----------------------------------------------------------------------------------------
+%	ARTICLE CONTENTS
+%----------------------------------------------------------------------------------------
+
+% =========================================================================
+% SECTION 1: INTRODUCTION AND MOTIVATION
+% =========================================================================
+\section{Introduction and Motivation}
+
+
+Classical linear regression frameworks fundamentally rely on the assumption of independent and identically distributed (i.i.d.) observations. While computationally convenient, this foundational paradigm can collapse when applied to real-world structural data. Observations can be embedded within dense connected topologies. These underlying structures create complex relational dependencies among observed outcomes, causing standard ordinary least squares (OLS) estimations to yield biased and inaccurate parameter estimates.
+
+To address these relational dependencies, statisticians, network econometricians, and quantitative sociologists have developed several distinct classes of network regression models. Early foundations established by \cite{ord1975} and \cite{anselin2002} laid the mathematical groundwork for network regression estimation, which allowed \cite{leenders2002} to formally introduce the Network Effects Model (NEM) and the Network Disturbances Model (NDM). The NEM captures simultaneous feedback loops where one observation's outcome is directly weighted by a dependent observation's outcome. Alternatively, the NDM models scenarios where an observation's outcome is driven by its own intrinsic expected value and the deviations of its connected neighbors from their own expected values. Network statistics has continued to grow and, more recently, the field has advanced to address localized structural dynamics. For instance, \cite{sewell2017a} developed heterogeneous susceptibilities models to relax the restrictive assumption of a global network parameter $\rho$, allowing individual nodes to vary in how they respond to neighbor influences. Additionally, \cite{sewell2017b} adapted network autocorrelation models to handle egocentric data, allowing for inference when collecting data on the entire network is infeasible or the network boundary cannot be observed. \cite{pham2024} proposed homophily-adjusted network models for cross-sectional data, providing a framework to estimate network influence without the bias induced by unobserved, homophilic features. Finally, Network Moderated Regression (NMR) handles situations where a network is affecting, or moderating, that intrinsic relationship between the predictors and outcome.
+
+Despite the growth of network statistics, the available software implementations for these models remain scattered and unoptimized. Currently, a researcher seeking to estimate network regressions must find either scattered \texttt{R} packages that contain only a subset of these methods, rely on script-based replication files from isolated publications, or manually program the estimation code themselves. This software fracture creates immense difficulty, which is likely causing researchers to frequently abstain from implementing these network models in lieu of simpler, albeit misspecified, i.i.d. models. Furthermore, existing software rarely adheres to standard \texttt{R} regression coding conventions, often supports only specific network structures that force users into tedious preprocessing, and heavily favors the frequentist paradigm, which maximum likelihood estimations have been shown to have severe computational and analytical limitations when handling complex or high-dimensional network feedback structures \cite{anselin1988, lesage2009} in comparison to Bayesian MCMC estimation.
+
+
+The \texttt{NetReg} package bridges this methodological and computational gap by providing a singular, unified environment to perform network based regression. \texttt{NetReg} allows users to specify the model of their choice, select their preferred estimation method and modifications to the estimation, and allows them to input various commonly used network formats. Ultimately, \texttt{NetReg} lowers the technical barrier to entry for performing statistically sound, network based regression within the \texttt{R} environment, offering a unified home for both the established spatial-network archetypes and some modern structural extensions.
+
+% =========================================================================
+% SECTION 2: PACKAGE ARCHITECTURE AND DATA HANDLING
+% =========================================================================
+\section{Package Architecture and Data Handling}
+
+The development of the \texttt{NetReg} package is guided by four core design principles: uniformity across implementations, strict alignment with standard \texttt{R} programming conventions, flexible data format handling, and comprehensive user control over estimation parameters. Rather than requiring users to completely alter their workflows or learn separate syntax frameworks when switching between distinct models, \texttt{NetReg} provides a standardized interface that remains consistent regardless of the underlying mathematical specification. The package allows practitioners to pass diverse, commonly used network data formats directly into a single framework. Furthermore, the package allows for customization, giving researchers the explicit ability to manipulate their estimations through flexible prior function and parameter specifications.
+
+\subsection{The Unified Wrapper}
+The gateway of the package is represented by the master wrapper function, \texttt{netreg()}. In accordance with uniformity, this single function acts as an administrative router for the entire package. A researcher can transition between entirely different network modeling architectures simply by modifying the character string passed to the \texttt{model} and \texttt{method} arguments.
+
+For example, changing the input from \texttt{model = "effects"} to \texttt{model = "disturbances"} paths the internal data structures to their respective model estimation methods without requiring the user to learn isolated syntax workflows. Then applying the input \texttt{method = "stan"} instructs the code to estimate the model using MCMC implemented through the \texttt{Stan} framework. Each model has \texttt{method = "stan"} and \texttt{method = "normal"} options for estimation through the \texttt{Stan} framework and normal approximation of the posterior respectively, but some may have additional options based on current availability from other sources. Upon execution, \texttt{netreg()} returns a list carrying a dual-class S3 identifier (e.g., \texttt{c("effects", "netreg")}). This architecture enables consistent method dispatching, allowing generic functions such as \texttt{summary()} to behave in a manner fully consistent with standard \texttt{R} regression objects. However, if a user wishes, instead of using the greater wrapper function, there are model-specific functions available for each model as well that will be described in section 3.
+
+\subsection{The Standardized Formula Interface}
+A primary usability constraint of some existing network software packages is the complete absence of symbolic model specification. For instance, classical implementations frequently force practitioners to manually subset data objects, explicitly partition independent from response variables, and verify dimensional alignment out of loop before executing a model.
+
+To eliminate this friction, the master wrapper function \texttt{netreg()}, along with each model-specific function, fully supports the standard \texttt{R} symbolic \texttt{formula} syntax (e.g., \texttt{y $\sim$ x1 + x2}). By using the design of baseline functions like \texttt{lm()}, \texttt{NetReg} handles variable extraction, intercept creation, and internal dimension checks automatically. This structural alignment with common regression packages lowers the learning curve and allows researchers to focus on model evaluation rather than data formatting.
+
+\subsection{Adaptable Network Input Support}
+In empirical network research, structural data is rarely stored in a single standardized format. Depending on the scientific domain or primary data collection tool, a network topology might be represented as a base \texttt{R} dense numeric \texttt{matrix}, a memory-efficient sparse matrix (\texttt{dgCMatrix}) from the \texttt{Matrix} package, an \texttt{igraph} object, a \texttt{network} package container, or a raw dyadic coordinate \texttt{edgelist}. Existing coercion engines, such as the \texttt{intergraph} package \cite{intergraph_pkg}, only facilitate translation between specific object classes (e.g., bridging \texttt{igraph} and \texttt{network} structures) and fail to accommodate the full spectrum of matrix and raw coordinate types required for statistical modeling techniques.
+
+To resolve this limitation, \texttt{NetReg} automates network type uniformization entirely behind the scenes. Users simply supply an \texttt{R} object of any of these five distinct format types directly to the \texttt{network =} argument of the master \texttt{netreg()} wrapper or any model-specific subroutine. The internal code automatically detects the input class and coerces it into the proper computational matrix format required by the underlying estimation.
+
+This behavior is driven by a highly generalized utility function named \texttt{convert\_adjacency()}. While this function operates automatically inside the regression workflow, it is also exported directly in the package namespace. This allows researchers to utilize \texttt{convert\_adjacency()} as a convenient tool for network transformations outside of performing network regression. The function accepts the target graph structure via the \texttt{A} argument and routes it to the requested format specified by the \texttt{out} parameter:
+\begin{itemize}
+    \item \texttt{out = "matrix"}: Coerces the network into a standard dense base \texttt{R} matrix operator.
+    \item \texttt{out = "Matrix"}: Produces a formal sparse \texttt{dgCMatrix} for computationally demanding environments.
+    \item \texttt{out = "igraph"}, \texttt{"network"}, or \texttt{"edgelist"}: Dynamically generates their respective graph containers or data frames.
+\end{itemize}
+By performing this conversion for the user, \texttt{NetReg} eliminates the difficulty and frustration that arises with obtaining a network in an undesirable format and having to convert it to a usable one.
+
+\subsection{Automated Node-Attribute Extraction}
+When working with network data, researchers frequently store node-level covariates (such as node demographics, behavioral metrics, or gene expression levels) directly as metadata attributes inside their graph structures. Under standard \texttt{R} workflows, extracting these attributes into a separate data frame to perform regression analysis requires manual, multi-step code execution. This manual process introduces data management friction and risks misaligning observation rows with the underlying adjacency matrix rows.
+
+To streamline this workflow, \texttt{NetReg} introduces an automated node-attribute extraction mechanism tailored for \texttt{igraph} objects. If a user passes an \texttt{igraph} object to the \texttt{data} argument and enters the \texttt{network} argument as NULL (\texttt{network = NULL}), the package automatically executes an internal extraction sequence. This sequence harvests all available node attributes directly from the graph object and uses them to construct the model's design matrix $X$ and response vector $y$.
+
+Implementation of this is performed through the aforementioned \texttt{convert\_adjacency()} function; thus, this extraction is available outside of performing any regression. By removing the requirement to maintain a separate data frame alongside the network object, this automated extraction feature allows researchers to transition from a single raw graph file directly to formal network model estimation in a single line of code.
+
+\subsection{Matrix Normalization}
+In many empirical applications of network regression, it is mathematically critical to row-normalize the adjacency matrix $A$. Row-normalization scales the elements of each row so they sum to one, ensuring that the network lag term represents a localized neighborhood average rather than an unscaled sum driven entirely by the number of connections a node has. Within \texttt{NetReg}, this transformation is handled automatically across all model specifications via the logical argument \texttt{rownorm = TRUE}, which acts as the default behavior throughout the package.
+
+To execute this, the master wrapper relies on an internally optimized and exported utility function named \texttt{row\_norm()}. Similar to the data coercion tools, \texttt{row\_norm()} is fully exposed in the package namespace, providing a standalone matrix manipulation function for the user. The function accepts a dense or sparse adjacency object via the \texttt{Network} argument and features an advanced inversion feature managed by the \texttt{reverse} parameter:
+\begin{itemize}
+    \item \texttt{reverse = FALSE}: Standard execution. The function dynamically row-normalizes the incoming matrix. It preserves memory layouts by automatically maintaining the input's native data class (e.g., passing a sparse \texttt{dgCMatrix} yields an identically structured sparse \texttt{dgCMatrix} output).
+    \item \texttt{reverse = TRUE}: Inversion execution. Converts a previously row-normalized matrix back into an un-normalized, absolute array.
+    \item \texttt{sparse = TRUE}: When performing an inversion (\texttt{reverse = TRUE}), this logical argument forces the un-normalized output into a sparse matrix class, mitigating memory overhead for massive, low-density topologies.
+\end{itemize}
+By unifying automated normalization with standalone matrix inversion capabilities, \texttt{NetReg} eliminates the manual matrix manipulation steps that can introduce errors into network analyses.
+% =========================================================================
+% SECTION 3: STATISTICAL MODELS AND SPECIFICATIONS
+% =========================================================================
+\section{Statistical Models and Specifications}
+
+\subsection{The Network Effects Model (NEM)}
+
+The Network Effects Model (NEM), often referred to as the network autoregressive or spatial lag model, estimates when an individual node's outcome is directly affected by the outcomes of its network neighbors. Formally, let $y \in \mathbb{R}^n$ denote the vector of continuous outcomes across $n$ observations, $X \in \mathbb{R}^{n \times p}$ denote the design matrix containing $p$ predictors, and $A \in \mathbb{R}^{n \times n}$ denote the adjacency matrix representing the underlying network topology. $A$ can be weighted or unweighted where its diagonal values are all 0. The structural model is defined as:
+\begin{equation}
+    y = \rho A y + X\beta + \epsilon, \quad \epsilon \sim N(0, \sigma^2 I_n), \label{eq:nem}
+\end{equation}
+where $\rho$ is the scalar network autoregressive parameter, $\beta \in \mathbb{R}^p$ is a vector of fixed effects, and $\epsilon$ represents an independent Gaussian error vector scaled by the variance parameter $\sigma^2$.
+
+\subsubsection{Software Implementation}
+Estimation of the Network Effects Model is implemented via the \texttt{nem()} function. Existing public implementations are either not available through an \texttt{R} package or if they are, such as through the \texttt{sna} package \cite{sna_pkg}, do not implement the convention of a formula line or allow for Bayesian estimation. The \texttt{nem()} design allows use of the automotive, hybrid variable scavenger data engine via a symbolic formula line, enabling robust Bayesian estimation while also preserving the option to utilize the original frequentist framework, giving the researcher complete flexibility over their inferential paradigm.
+
+\subsubsection{Estimation Methods}
+The user controls inference on the joint posterior distribution $p(\beta, \sigma^2, \rho \mid y, X, A)$ by selecting one of four distinct algorithms passed to the \texttt{method} argument:
+\begin{enumerate}
+    \item \texttt{method = "normal"}: Executes numerical maximum a posteriori (MAP) optimization of the log-posterior surface using the base \texttt{R} \texttt{optim()} architecture forced to follow the \texttt{"L-BFGS-B"} algorithm. Advanced optimization control parameters can be supplied directly via the ellipsis (\texttt{...}) argument.
+    \item \texttt{method = "stan"}: Interfaces directly with the Stan engine via \texttt{rstan::sampling()} to perform exact Markov Chain Monte Carlo (MCMC) inference using high-efficiency Hamiltonian Monte Carlo (HMC) sampling by transforming $y$ into its native regression form to prevent internal matrix inversions.
+    \item \texttt{method = "is"} (or \texttt{"importance sampling"}): Implements a localized importance sampler utilizing a multivariate normal proposal distribution calibrated via a preliminary normal approximation peak-mode, including an effective sample size (ESS) degeneracy check, to rapidly draw independent samples from the target posterior surface.
+    \item \texttt{method = "lnam"}: Diverges to a classical frequentist maximum likelihood estimation framework leveraging established implementations in the network ecosystem \cite{sna_pkg}.
+\end{enumerate}
+The final output is bundled as a list carrying the S3 class identifier \texttt{c("effects", "netreg")}, enabling consistent method dispatching for metrics extractions, standard summaries, and model visualization.
+
+\subsubsection{Prior Specification}
+Under the Bayesian framework, \texttt{NetReg} provides highly intuitive and flexible hyperparameter structures. The default priors are:
+\begin{align*}
+    \beta &\sim N_p(\mu_\beta, \Sigma_\beta) \\
+    \sigma^2 &\sim \text{Inverse-Gamma}(a, b) \\
+    \rho &\sim \text{Truncated-Normal}_{(-1, 1)}(\mu_\rho, \sigma_\rho^2)
+\end{align*}
+The function \texttt{nem()} simplifies the declaration of these priors by parsing the inputs adaptively based on user specifications:
+\begin{itemize}
+    \item \textbf{Beta Prior (\texttt{beta\_prior}):} Defaults to a multivariate normal distribution with mean $\mu_\beta = 0$ and covariance $\Sigma_\beta = I_p$. If a list containing \texttt{mean} and \texttt{sigma} elements is passed, a scalar entry for \texttt{mean} assigns a uniform mean to all elements of $\mu_\beta$, and a scalar entry for \texttt{sigma} acts as a multiplier on the identity matrix ($c \cdot I_p$).
+    \item \textbf{Variance Prior (\texttt{s2\_prior}):} Defaults to an Inverse-Gamma distribution parameterized via a list containing \texttt{shape} $a = 1$ and \texttt{scale} $b = 1$.
+    \item \textbf{Network Dependence Prior (\texttt{rho\_prior}):} Defaults to a truncated normal distribution restricted to stationary bounds $(-1, 1)$, parameterized via a list with mean $\mu_\rho = 0.36$ and standard deviation $\sigma_\rho = 0.7$ (yielding a prior variance of $0.49$), following empirical spatial network consensus configurations \cite{dittrich2017}.
+\end{itemize}
+Crucially, when employing numerical optimization via \texttt{method = "normal"}, \texttt{NetReg} permits advanced users to supply a completely custom, functional R \texttt{function()} evaluating the prior log-density. This feature enables user-defined regularizations or alternative bounding mechanisms. However, if full sampling or inference is requested via Stan or Importance Sampling, prior assignments are strictly restricted to structured list inputs to ensure mathematical compatibility with the underlying samplers.
+\subsection{The Network Disturbances Model (NDM)}
+
+The Network Disturbances Model (NDM), rooted in the foundational work of \cite{ord1975}, \cite{anselin2002}, and \cite{leenders2002}, models scenarios where each node's outcome is affected by the deviations of its neighbors from their expected values. Formally, let $y \in \mathbb{R}^n$ denote the vector of continuous outcomes across $n$ observations, $X \in \mathbb{R}^{n \times p}$ denote the design matrix containing $p$ predictors, and $A \in \mathbb{R}^{n \times n}$ denote the adjacency matrix representing the underlying network topology with diagonal values equal to 0. The structural model is defined by the following system of equations:
+\begin{align}
+    y &= X\beta + \nu, \label{eq:ndm_base} \\
+    \nu &= \rho A \nu + \epsilon, \quad \epsilon \sim N(0, \sigma^2 I_n), \label{eq:ndm_error}
+\end{align}
+where $\beta \in \mathbb{R}^p$ is a vector of fixed effects representing an observation's intrinsic expected value, $\nu$ represents the vector of network disturbances, $\rho$ is the scalar network autoregressive parameter, and $\epsilon$ is an independent Gaussian innovation vector. By substituting for $\nu$ and then solving for $yfx$, this system can be compactly simplified into a single linear regression model with non-isotropic, network-structured innovations:
+\begin{equation}
+    y = X\beta + \epsilon^*, \quad \epsilon^* \sim N\left(\mathbf{0}, \; \sigma^2 (I_n - \rho A)^{-1} \left[(I_n - \rho A)^{-1}\right]^{T}\right). \label{eq:ndm_simplified}
+\end{equation}
+Under this specification, an observation's outcome is driven by its own intrinsic attributes and the localized structural deviations of its connected neighbors from their own expected values.
+
+\subsubsection{Software Implementation}
+Estimation of the Network Disturbances Model is implemented via the \texttt{ndm()} function. Similar to the network effects implementation, existing options are highly scattered and typically lack a standardized user interface or Bayesian estimation capabilities. The \texttt{ndm()} implementation integrates our automotive, hybrid variable scavenger data engine via a unified symbolic formula line and provides flexible Bayesian estimation routines alongside the classical frequentist frameworks.
+
+\subsubsection{Estimation Methods}
+The \texttt{ndm()} function allows users to seamlessly navigate the speed-accuracy trade-off by selecting from the same computational engines available in the master wrapper via the \texttt{method} argument:
+\begin{enumerate}
+    \item \texttt{method = "normal"}: Performs numerical maximum a posteriori (MAP) estimation of the log-posterior surface via the base \texttt{R} \texttt{optim()} interface using the bounded \texttt{"L-BFGS-B"} algorithm. Advanced optimization control parameters can be supplied directly via the ellipsis (\texttt{...}) argument.
+    \item \texttt{method = "stan"}: Interfaces directly with the Stan engine via \texttt{rstan::sampling()} to perform exact Markov Chain Monte Carlo (MCMC) inference using high-efficiency Hamiltonian Monte Carlo (HMC) sampling. The underlying model block isolates the disturbance error system natively to completely bypass slow matrix inversions during MCMC iterations.
+    \item \texttt{method = "is"} (or \texttt{"importance sampling"}): Implements a localized importance sampler utilizing a multivariate normal proposal distribution calibrated via a preliminary normal approximation peak-mode, including an effective sample size (ESS) degeneracy check, to rapidly draw independent samples from the target posterior surface.
+    \item \texttt{method = "lnam"}: Diverges to a classical frequentist maximum likelihood estimation framework leveraging established implementations in the network ecosystem \cite{sna_pkg}.
+\end{enumerate}
+The final output is returned as an S3 object carrying the dual-class identifier \texttt{c("disturbances", "netreg")}, ensuring predictable behavior when methods like \texttt{summary()} are executed.
+
+\subsubsection{Prior Specification}
+The default prior landscapes for the NDM echo the specifications of the NEM, assuming:
+\begin{align*}
+    \beta &\sim N_p(\mu_\beta, \Sigma_\beta) \\
+    \sigma^2 &\sim \text{Inverse-Gamma}(a, b) \\
+    \rho &\sim \text{Truncated-Normal}_{(-1, 1)}(\mu_\rho, \sigma_\rho^2)
+\end{align*
+The \texttt{ndm()} function simplifies the declaration of these priors by parsing the inputs adaptively based on user specifications:
+\begin{itemize}
+    \item \textbf{Beta Prior (\texttt{beta\_prior}):} Defaults to a multivariate normal distribution with $\mu_\beta = 0$ and $\Sigma_\beta = I_p$. It accepts a list containing \texttt{mean} and \texttt{sigma} elements, where scalar inputs expand uniform means or identity scaling multipliers.
+    \item \textbf{Variance Prior (\texttt{s2\_prior}):} Defaults to an Inverse-Gamma distribution parameterized via a list containing \texttt{shape} $a = 1$ and \texttt{scale} $b = 1$.
+    \item \textbf{Network Dependence Prior (\texttt{rho\_prior}):} Defaults to a truncated normal distribution restricted to stationary bounds $(-1, 1)$, parameterized via a list with mean $\mu_\rho = 0.36$ and standard deviation $\sigma_\rho = 0.7$ (yielding a prior variance of $0.49$).
+\end{itemize}
+As with the other architectures, using \texttt{method = "normal"} grants researchers the unique capability to pass a fully customized log-density \texttt{R} \texttt{function()} to the prior inputs, completely overriding default distributions for advanced regularized modeling. However, if full sampling or inference is requested via Stan or Importance Sampling, prior assignments are strictly restricted to structured list inputs.
+% =========================================================================
+% SECTION 3.3: THE HETEROGENEOUS SUSCEPTIBILITIES MODEL
+% =========================================================================
+\subsection{The Heterogeneous Susceptibilities Model}
+
+The Heterogeneous Susceptibilities Model relaxes the highly restrictive assumption embedded in classical specifications that network influence operates uniformly across all nodes. While traditional frameworks parsimoniously account for how structural neighbors influence behaviors or outcomes, they assume a homogeneous susceptibility to network influence across all observations. In many empirical contexts, this homogeneity assumption is overly restrictive, as individual actors can vary significantly in their responsiveness to localized structural patterns. Formally, let $y \in \mathbb{R}^n$ denote the vector of continuous outcomes, $X \in \mathbb{R}^{n \times p}$ denote the main design matrix of predictors, and $A \in \mathbb{R}^{n \times n}$ denote the network adjacency matrix with diagonal entries set to 0.
+
+Directly estimating an individualized, unconstrained susceptibility parameter $\rho_i$ for every single node from an $n \times 1$ response vector results in a severe lack of model identification. To make estimation tractable and statistically identifiable, \texttt{NetReg} implements a linear reparameterization mapping individual susceptibilities to observed actor characteristics. Let $\widetilde{W} \in \mathbb{R}^{n \times q}$ denote a secondary design matrix containing $q$ node-level covariates believed to modulate an actor's responsiveness to social influence, and let $\gamma \in \mathbb{R}^q$ denote the corresponding vector of structural susceptibility coefficients. The individual susceptibility vector $\boldsymbol{\rho} = (\rho_1, \rho_2, \dots, \rho_n)^T$ is modeled as a linear combination of these traits:
+\begin{equation}
+    \boldsymbol{\rho} = \widetilde{W}\gamma
+\end{equation}
+The Heterogeneous Susceptibilities Network Effects Model (HS-NEM) is then formally defined as:
+\begin{equation}
+    y = \text{diag}(\boldsymbol{\rho}) A y + X\beta + \epsilon, \quad \epsilon \sim N(0, \sigma^2 I_n), \label{eq:hs_effects}
+\end{equation}
+where $\beta \in \mathbb{R}^p$ is the vector of fixed effects, and $\epsilon$ represents an independent Gaussian innovation vector scaled by the variance parameter $\sigma^2$. Parallelly, the Heterogeneous Susceptibilities Network Disturbances Model (HS-NDM) propagates these individualized dependencies directly through the residual innovation structure:
+\begin{equation}
+    y = X\beta + \nu, \quad \nu = \text{diag}(\boldsymbol{\rho}) A \nu + \epsilon, \quad \epsilon \sim N(0, \sigma^2 I_n). \label{eq:hs_disturbances}
+\end{equation}
+Under these specifications, an individual's network feedback loop is bounded by their own structural attributes, allowing researchers to formally test which specific covariates scale an actor's susceptibility to their neighbors.
+
+\subsubsection{Software Implementation}
+Estimation of these individualized network dependency architectures is implemented via the \texttt{hs\_nem()} and \texttt{hs\_ndm()} functions. The secondary matrix $\widetilde{W}$ is parsed adaptively via a one-sided formula argument (e.g., \texttt{W\_formula = $\sim$ x1 + x3}). If left as \texttt{W\_formula = NULL}, the function automatically falls back to utilizing the main predictor matrix ($\widetilde{W} = X$) to define the susceptibility covariates.
+
+\subsubsection{Estimation Methods}
+The user controls inference on the joint posterior distribution $p(\beta, \sigma^2, \gamma \mid y, X, \widetilde{W}, A)$ by passing one of two options to the \texttt{method} argument:
+\begin{enumerate}
+    \item \texttt{method = "normal"}: Executes high-speed numerical maximum a posteriori (MAP) optimization of the log-posterior density space using the base \texttt{R} \texttt{optim()} infrastructure using the bounded \texttt{"L-BFGS-B"} routine. An internal boundary check automatically rejects candidate parameters that push any individual node's calculated $\rho_i$ value outside stationary bounds $(-1, 1)$.
+    \item \texttt{method = "stan"}: Interfaces directly with the Stan engine via \texttt{rstan::sampling()} to perform exact Markov Chain Monte Carlo (MCMC) inference using high-efficiency Hamiltonian Monte Carlo (HMC) sampling. The underlying model block isolates the transformation system natively and enforces a hard rejection path if any individual elements of the $\boldsymbol{\rho}$ vector drift outside stationary limits.
+\end{enumerate}
+The final output is returned as an S3 object carrying the specific class identifiers \texttt{c("heterogeneous\_effects", "netreg")} or \texttt{c("heterogeneous\_disturbances", "netreg")}, which automatically routes to a summary matrix summarizing the sample-wide distribution (Mean, SD, Min, Max) of individual susceptibilities alongside the fixed parameter interval tables.
+
+\subsubsection{Prior Specification}
+To keep estimation stable across the linear combination space, \texttt{NetReg} evaluates fixed effects, variance scales, and the susceptibility parameter coefficients simultaneously:
+\begin{align*}
+    \beta &\sim N_p(\mu_\beta, \Sigma_\beta) \\
+    \sigma^2 &\sim \text{Inverse-Gamma}(a, b) \\
+    \gamma &\sim N_q(\mu_\gamma, \Sigma_\gamma)
+\end{align*}
+The hyperparameter entries are processed adaptively based on user specifications:
+\begin{itemize}
+    \item \textbf{Beta Prior (\texttt{beta\_prior}):} Defaults to a multivariate normal distribution with mean $\mu_\beta = 0$ and variance $\Sigma_\beta = I_p$.
+    \item \textbf{Variance Prior (\texttt{s2\_prior}):} Defaults to an Inverse-Gamma distribution with shape $a = 1$ and scale $b = 1$.
+    \item \textbf{Susceptibility Coefficient Prior (\texttt{gamma\_prior}):} Parameterizes the vector of linear modifiers $\gamma$. Defaults to a multivariate normal distribution with mean $\mu_\gamma = 0$ and variance $\Sigma_\gamma = I_q$. If a list containing \texttt{mean} and \texttt{sigma} elements is passed, scalar entries expand automatically into a uniform vector and an identity-multiplier matrix ($c \cdot I_q$) across all $q$ parameters.
+\end{itemize}
+When executing numerical optimization via \texttt{method = "normal"}, users retain the functional flexibility to write their own custom R \texttt{function()} evaluating log-prior bounds, while Stan execution remains restricted to structured lists.
+
+% =========================================================================
+% SECTION 3.4: NETWORK AUTOCORRELATION MODELS WITH EGOCENTRIC DATA
+% =========================================================================
+\subsection{Network Autocorrelation Models with Egocentric Data}
+
+The Network Autocorrelation Model with Egocentric Data, introduced by \cite{sewell2017b}, provides a robust inferential framework for scenarios where collecting data on the entire network is infeasible or the overall network boundary cannot be defined. Suppose the total actor set $\mathcal{V}$ is partitioned into $n_e$ sampled egos ($\mathcal{V}_e$), $n_a$ observed alters ($\mathcal{V}_a$), and $n_o$ unobserved remaining actors ($\mathcal{V}_o$). The global adjacency matrix $A$ and attribute structures are partitioned conformably:
+\[
+A = \begin{bmatrix} A_e & A_{ea} & 0 \\ A_{ea}' & A_a & A_{ao} \\ 0 & A_{ao}' & A_o \end{bmatrix}, \quad \mathbf{y} = \begin{bmatrix} \mathbf{y}_e \\ \mathbf{y}_a \\ \mathbf{y}_o \end{bmatrix}, \quad X = \begin{bmatrix} X_e \\ X_a \\ X_o \end{bmatrix}
+\]
+Because $\mathbf{y}_a$, $\mathbf{y}_o$, $A_a$, and $A_{ao}$ are unobserved under egocentric sampling designs, \cite{sewell2017b} derives the exact distribution of the observed ego outcomes conditional on a low-dimensional latent vector of residual alter influences, $\alpha \in \mathbb{R}^{n_a}$. The unknown nuisance parameter vector $\alpha$ succinctly sums up all unknown information about the unobserved global network topology that pertains to the ego responses $\mathbf{y}_e$, and does not depend on the scale of $n_o$.
+
+The Ego Network Effects Model (Ego-NEM) defines the latent vector as $\alpha = A_a \mathbf{y}_a + A_{ao} \mathbf{y}_o$. Conditioning on $\alpha$ isolates the ego response vector:
+\begin{equation}
+    \mathbf{y}_e \mid \alpha \sim N\left( M_1^{-1} \left[ (X_e + \rho A_{ea} X_a)\beta + \rho^2 A_{ea}\alpha \right], \, \sigma^2 M_1^{-1} M_2 M_1^{-1} \right)
+\end{equation}
+where $M_1 = I_{n_e} - \rho A_e - \rho^2 A_{ea} A_{ea}'$ and $M_2 = I_{n_e} + \rho^2 A_{ea} A_{ea}'$.
+
+The Ego Network Disturbances Model (Ego-NDM) propagates these local network dependencies directly through the residual error structures. Defining the latent innovation vector as $\alpha = A_a(\mathbf{y}_a - X_a\beta) + A_{ao}(\mathbf{y}_o - X_o\beta)$, the conditional distribution is:
+\begin{equation}
+    \mathbf{y}_e \mid \alpha \sim N\left( X_e\beta + \rho^2 M_1^{-1} A_{ea}\alpha, \, \sigma^2 M_1^{-1} M_2 M_1^{-1} \right)
+\end{equation}
+where $M_1$ and $M_2$ retain their definitions from the effects specification. This dual framework permits full parameter identification and valid network inference without requiring knowledge of the unobserved global graph structure.
+
+\subsubsection{Software Implementation}
+Estimation of network dependencies using sampled egocentric network formats is implemented via the \texttt{ego\_nem()} and \texttt{ego\_ndm()} functions. Outside of specific publication code, standard software libraries lack native routines to parse egocentric sub-graphs directly into formal network autoregressive estimators.
+
+\texttt{NetReg} solves this constraint by implementing an adaptive input data engine. If a practitioner possesses unified matrices, supplying a logical or integer indexing vector to the \texttt{is\_ego} argument triggers an automated matrix slicing sequence. The package splits the inputs conformably into the ego-to-ego matrix $A_e = A[\text{is\_ego}, \text{is\_ego}]$, the ego-to-alter matrix $A_{ea} = A[\text{is\_ego}, !\text{is\_ego}]$, and separates covariates into distinct data frames \texttt{data\_e} and \texttt{data\_a} built side-by-side via a matching formula structure. Alternatively, researchers with pre-split networks can supply the decoupled sub-blocks directly to the function arguments.
+
+\subsubsection{Estimation Methods}
+The user controls inference on the joint posterior distribution $p(\beta, \sigma^2, \rho, \alpha \mid y_e, X_e, X_a, A_e, A_{ea})$ by passing the appropriate method token to the \texttt{method} argument:
+\begin{enumerate}
+    \item \texttt{method = "normal"}: Executes numerical maximum a posteriori (MAP) optimization of the log-posterior surface using the base \texttt{R} \texttt{optim()} engine via the \texttt{"L-BFGS-B"} algorithm. To maintain complete stability across the high-dimensional latent space, the vector $\alpha$ is initialized at all zeros, corresponding to the mean of its prior distribution.
+    \item \texttt{method = "stan"}: Interfaces directly with the Stan engine via \texttt{rstan::sampling()} to perform exact Markov Chain Monte Carlo (MCMC) inference using high-efficiency Hamiltonian Monte Carlo (HMC) sampling, which handles the high-dimensional parameter space of the latent $\alpha$ vector reliably.
+\end{enumerate}
+The final outputs are packaged as formal S3 objects carrying the specific class identifiers \texttt{c("egocentric\_effects", "netreg")} or \texttt{c("egocentric\_disturbances", "netreg")}, which route to summary tables displaying interval estimates for the structural coefficients alongside the vector distribution metrics of the latent alter effects.
+
+\subsubsection{Prior Specification}
+Under the Bayesian framework, \texttt{NetReg} structures prior assignments to evaluate fixed effects, variance scales, spatial dependencies, and latent residual alter variations simultaneously:
+\begin{align*}
+    \beta &\sim N_p(\mu_\beta, \Sigma_\beta) \\
+    \sigma^2 &\sim \text{Inverse-Gamma}(a, b) \\
+    \rho &\sim \text{Truncated-Normal}_{(-1, 1)}(\mu_\rho, \sigma_\rho^2) \\
+    \alpha &\sim N_{n_a}(\mu_\alpha, \sigma_\alpha^2 I_{n_a})
+\end{align*}
+The functions simplify the declaration of these priors by parsing list inputs adaptively based on user specifications:
+\begin{itemize}
+    \item \textbf{Beta Prior (\texttt{beta\_prior}):} Defaults to a multivariate normal distribution with $\mu_\beta = 0$ and $\Sigma_\beta = I_p$.
+    \item \textbf{Variance Prior (\texttt{s2\_prior}):} Defaults to an Inverse-Gamma distribution parameterized via a list containing \texttt{shape} $a = 1$ and \texttt{scale} $b = 1$.
+    \item \textbf{Network Dependence Prior (\texttt{rho\_prior}):} Defaults to a truncated normal distribution restricted to stationary bounds $(-1, 1)$, with mean $\mu_\rho = 0.36$ and standard deviation $\sigma_\rho = 0.7$ (prior variance of $0.49$).
+    \item \textbf{Latent Alter Prior (\texttt{alpha\_prior}):} Parameterizes the vector of latent residual alter influence effects. Following empirical consensus for flat, non-informative latent regularizations, it defaults to a spherical normal distribution with mean $\mu_\alpha = 0$ and variance $\sigma_\alpha^2 = 100$.
+\end{itemize}
+When executing numerical optimization, practitioners can supply an entirely custom log-density \texttt{R} \texttt{function()} to any prior input to evaluate irregular bounding conditions, while Stan execution remains restricted to structured lists.
+% =========================================================================
+% SECTION 3.5: HOMOPHILY-ADJUSTED NETWORK MODELS
+% =========================================================================
+\subsection{Homophily-Adjusted Network Models}
+
+The Homophily-Adjusted Network Effects and Disturbances models, proposed by \cite{pham2024}, address the issue of endogenous edge-sorting (homophily) confounding network dependencies in cross-sectional data. Standard network regression specifications risk generating biased parameter estimates because cross-sectional data cannot naturally distinguish between true network influence and homophily. To resolve this, \cite{pham2024} introduce a framework that blocks the unobserved homophilic features by incorporating an \(n \times D\) matrix of latent coordinates, \(U\).
+Let \(y \in \mathbb{R}^n\) denote the continuous outcome vector, \(X \in \mathbb{R}^{n \times p}\) denote the design matrix, and \(A \in \mathbb{R}^{n \times n}\) denote the network adjacency matrix with a zero diagonal. The Homophily-Adjusted Network Effects Model (HANE) extends Equation~\ref{eq:nem} to incorporate these unobserved traits directly into the mean structure via an additive matrix product \(U\gamma\):
+\begin{equation}
+    y = \rho A y + X\beta + U\gamma + \epsilon, \quad \epsilon \sim N(0, \sigma^2_\alpha I_n), \label{eq:hane}
+\end{equation}
+Similarly, the Homophily-Adjusted Network Disturbances Model (HAND) accounts for these unobserved homophilic effects within the mean system while capturing the network dependencies through an autoregressive error structure:
+\begin{equation}
+    y = X\beta + U\gamma + \nu, \quad \nu = \rho A \nu + \epsilon, \quad \epsilon \sim N(0, \sigma^2_\alpha I_n). \label{eq:hand}
+\end{equation}
+
+\subsubsection{Software Implementation}
+Estimation of these specifications is implemented via the \texttt{hane()} and \texttt{hand()} subroutines. A unique structural requirement of this model class is specifying the matrix of latent locations, $U$. The function flexibly accepts custom parameters via the \texttt{U\_prior} argument, which can be passed as an analytical parameter list containing the matrix structures \texttt{Lambda}, \texttt{Omega}, and \texttt{Psi}, or as a raw 3D empirical sampling array of size $(\text{samples} \times n \times D)$. By default, the function sets \texttt{U\_prior = NULL}.
+
+If no latent positions are supplied, \texttt{NetReg} automatically addresses this missing data constraint by calling an internal routine to extract a non-parametric configuration directly from the adjacency matrix $A$ using an optimized adjacency spectral embedding (ASE) framework. Specifically, the function performs an eigendecomposition on the symmetric network structure, maps the top $k$ leading eigenvectors scaled by their square-root eigenvalues to establish baseline spatial coordinates $U_0 = V\Lambda^{1/2}$, and simulates target posterior uncertainty by injecting Gaussian perturbations across sample iterations. Regardless of the input origin, the final coordinates are evaluated internally to yield a stable Matrix-Normal prior landscape $\mathcal{MN}_{n \times D}(\Lambda, \Omega, \Psi)$ required for parameter estimation. This automated fallback sequence shields the practitioner from manual out-of-loop calculations, allowing immediate model execution from raw graph files.
+
+\subsubsection{Estimation Methods}
+Because homophily adjustment depends on processing dense latent spaces, estimation is focused on computational sampling engines and omits frequentist maximum likelihood filters. The user controls inference by assigning the desired execution token to the \texttt{method} argument:
+\begin{enumerate}
+    \item \texttt{method = "normal"}: Performs numerical maximum a posteriori (MAP) estimation of the log-posterior surface via the base \texttt{R} \texttt{optim()} engine using the bounded \texttt{"L-BFGS-B"} configuration.
+    \item \texttt{method = "stan"}: Interfaces directly with the Stan platform via \texttt{rstan::sampling()} to carry out exact Markov Chain Monte Carlo (MCMC) posterior calculations via Hamiltonian Monte Carlo, utilizing a direct spatial log-determinant Jacobian adjustment matrix block.
+\end{enumerate}
+The outputs are returned as formal S3 objects carrying the respective class identifiers \texttt{c("hane", "netreg")} or \texttt{c("hand", "netreg")}.
+
+\subsubsection{Prior Specification}
+Under the Bayesian framework, \texttt{NetReg} structures prior assignments to evaluate fixed effects, latent space distances, network dependence, and residuals simultaneously:
+\begin{align*}
+    \beta &\sim N_p(\mu_\beta, \Sigma_\beta) \\
+    \gamma &\sim N_D(\mu_\gamma, \Sigma_\gamma) \\
+    \sigma^2 &\sim \text{Inverse-Gamma}(a, b) \\
+    \rho &\sim \text{Truncated-Normal}_{(-1, 1)}(\mu_\rho, \sigma_\rho^2)
+\end{align*}
+\texttt{hane()} and \texttt{hand()} apply the default priors used by \cite{pham2024}:
+\begin{itemize}
+    \item \textbf{Fixed Effects Prior (\texttt{beta\_prior}):} Defaults to a multivariate normal distribution with mean $\mu_\beta = 0$ and variance $\Sigma_\beta = 2.25^2 I_p$.
+    \item \textbf{Latent Space Prior (\texttt{gamma\_prior}):} Defaults to a multivariate normal distribution with mean $\mu_\gamma = 0$ and variance $\Sigma_\gamma = 2.25^2 I_D$.
+    \item \textbf{Variance Prior (\texttt{s2\_prior}):} Defaults to an Inverse-Gamma distribution parameterized via a list containing \texttt{shape} $a = 2$ and \texttt{scale} $b = 0.5$.
+    \item \textbf{Network Dependence Prior (\texttt{rho\_prior}):} Defaults to a truncated normal distribution restricted to stationary bounds $(-1, 1)$, parameterized via a list with mean $\mu_\rho = 0.36$ and standard deviation $\sigma_\rho = 0.7$ (yielding a prior variance of $0.49$).
+\end{itemize}
+When executing numerical optimization (\texttt{method = "normal"}), practitioners can supply an entirely custom log-density \texttt{R} \texttt{function()} to any prior input to evaluate irregular bounding conditions, while Stan execution remains restricted to structured lists to ensure analytical compatibility with the sampler.
+
+% =========================================================================
+% SECTION 3.6: NETWORK MODERATED REGRESSION (NMR)
+% =========================================================================
+\subsection{Network Moderated Regression (NMR)}
+The final contribution of \texttt{NetReg} is the Network Moderated Regression (NMR) model. While traditional network autoregressive frameworks capture global behavioral contagion or spatial error disturbances, they are unequipped to handle scenarios where graph topologies systematically moderate the relationships between individual predictors and outcomes. NMR resolves this by mapping this moderation through mixed-effect membership of network communities. The model utilizes a community detection framework to map nodes into distinct structural clusters, translating these clusters into random grouping environments within a generalized linear mixed model framework. It also allows for partitioning of moderated and non-moderated predictors as well as testing for the presence of moderation.
+
+Formally, let $\mathbf{y} \in \mathbb{R}^n$ denote the vector of observed outcomes, and let $\mathbf{X} \in \mathbb{R}^{n \times p}$ denote the unified design matrix for the fixed effects. Let $\widetilde{\mathbf{Z}}$ represent the random effects design matrix matching the structural row-wise Khatri-Rao product of the community assignments and the moderated covariates. Under a hierarchical generalized mixed-effects specification, the model is formulated as:
+\begin{align}
+    g(\boldsymbol{\mu}) &= \mathbf{X}\begin{pmatrix} \boldsymbol{\beta}_1 \\ \boldsymbol{\omega} \end{pmatrix} + \widetilde{\mathbf{Z}}\mathbf{b}, \label{eq:nmr_structural} \\
+    \mathbf{b} &\sim \mathcal{N}(\mathbf{0}, \sigma^2 \boldsymbol{\Lambda}\boldsymbol{\Gamma}\boldsymbol{\Gamma}^T\boldsymbol{\Lambda}), \label{eq:nmr_distributions}
+\end{align}
+where $g(\cdot)$ is the canonical link function, $\boldsymbol{\mu} = \mathbb{E}(\mathbf{y})$, and $\begin{pmatrix} \boldsymbol{\beta}_1 \\ \boldsymbol{\omega} \end{pmatrix}  \in \mathbb{R}^p$ represents the unified fixed effects vector. This configuration cleanly integrates unmoderated controls alongside the baseline global slopes of moderated variables. Additionally, to maintain parsimony, the package summary outputs label this unified fixed parameter vector under a single shared \texttt{beta} designation, where the baseline global averages of the moderated parameters ($\boldsymbol{\omega}$) occupy their respective slots matching their column attributes.
+
+The vector $\mathbf{b}$ represents the community-level random effects distributed across the network partitions. $\boldsymbol{\Gamma}$ is a lower-triangular correlation matrix tracking the dependencies among random coefficients (with $1$s on the diagonal), and $\boldsymbol{\Lambda}$ is a diagonal scale matrix where each $\lambda_j$ dictates the structural contribution variance of the $j^{\text{th}}$ random effect. Following \cite{saville2009}, the contribution architecture of $\boldsymbol{\Lambda}$ is reparameterized further to map the estimated scale components onto an unbounded latent parameter space via $\boldsymbol{\psi}$, ensuring stable computational convergence during optimization.
+
+\subsubsection{Software Implementation and Multi-Family Specifications}
+Estimation of this cluster-moderated framework is managed via the \texttt{nmr()} subroutine. Following the package's core usability pillars, \texttt{nmr()} implements our standardized symbolic formula line and automates network partition assignment entirely behind the scenes. If a raw network structure is supplied without pre-specified cluster vectors via the \texttt{communities} argument, the function handles graph partitioning automatically by converting the adjacency structure to a matrix form and extracting hard assignments using label propagation via \texttt{igraph::cluster\_label\_prop()}.
+
+The user specifies which specific covariates undergo network moderation via a flexible, one-sided formula line passed to the \texttt{moderated\_formula} argument (e.g., \texttt{moderated\_formula = $\sim$ x1 + x3}). If left as \texttt{moderated\_formula = NULL}, the function defaults to a global moderation profile, mapping all covariates and the baseline intercept to the random effects design matrix.
+
+To maximize utility, the function incorporates a \texttt{family} argument matching standard \texttt{glm()} behavior, allowing researchers to choose multiple data models:
+\begin{itemize}
+    \item \texttt{family = "gaussian"}: Fits continuous outcomes with an identity link, automatically evaluating the residual error variance parameter $\sigma^2$.
+    \item \texttt{family = "binomial"}: Fits binary or logistical outcomes via a logit link function.
+    \item \texttt{family = "poisson"}: Fits count data distributions using a log link function.
+\end{itemize}
+The internal wrapper automatically extracts fixed and moderated matrices using the \texttt{moderated\_variables} token (defaulting to all covariates if left as \texttt{NULL}) and adaptively adjusts likelihood calculations based on the requested exponential family.
+
+\subsubsection{Estimation Methods}
+The user controls inference on the joint random-effects posterior distribution by passing the desired engine designation to the \texttt{method} argument:
+\begin{enumerate}
+    \item \texttt{method = "stan"}: Interfaces directly with a compiled multi-family Stan model located within the package directory (\texttt{nmr\_gaussian.stan} or \texttt{nmr\_discrete.stan}). It executes robust Markov Chain Monte Carlo (MCMC) inference using high-efficiency Hamiltonian Monte Carlo sampling. If \texttt{test = TRUE}, the engine utilizes bridge sampling via the \texttt{bridgesampling} package to compute Bayes Factors, testing whether the standard deviations of the random effects are significantly non-zero. Crucially, the testing engine automatically skips the random intercept parameter when iterating through column deletions to prevent structural baseline misspecifications. If a predictor's standard deviations of its random effects are non-zero, it suggests moderation is occurring.
+    \item \texttt{method = "normal"}: Executes numerical maximum a posteriori (MAP) estimation of the log-posterior surface via the base \texttt{R} \texttt{optim()} interface using the bounded \texttt{"L-BFGS-B"} algorithm. Advanced optimization control lists can be supplied directly via the ellipsis (\texttt{...}) argument.
+    \item \texttt{method = "is"} (or \texttt{"importance sampling"}): Employs a localized importance sampler utilizing a multivariate normal proposal distribution calibrated via a preliminary normal approximation peak-mode, including an effective sample size (ESS) degeneracy check, to rapidly draw independent samples from the target posterior surface. This engine is strictly restricted to continuous configurations (\texttt{family = "gaussian"}).
+\end{enumerate}
+The resulting output is packaged as an S3 object carrying the specific class identifier \texttt{c("nmr", "netreg")}, ensuring full parallel continuity with package summary utilities.
+
+\subsubsection{Prior Specification and Custom Regularization}
+Under the Bayesian framework, \texttt{NetReg} structures prior assignments to evaluate fixed effects, relative random scales, random correlation structures, and residual components simultaneously:
+\begin{align*}
+    \boldsymbol{\beta} &\sim \mathcal{N}_p(\boldsymbol{\mu}_{\beta}, \boldsymbol{\Sigma}_\beta) \\
+    \boldsymbol{\psi} &\sim \mathcal{N}_m(\boldsymbol{\mu}_\psi, \boldsymbol{\Sigma}_\psi) \\
+    \boldsymbol{\Gamma} &\sim \text{LKJ}(\eta) \\
+    \sigma^2 &\sim \text{Inverse-Gamma}(a, b) \quad (\text{Gaussian family only})
+\end{align*
+The function \texttt{nmr()} simplifies the declaration of these hyperparameter landscapes by parsing user inputs adaptively:
+\begin{itemize}
+    \item \textbf{Fixed Effects Prior (\texttt{beta\_prior}):} Defaults to a multivariate normal distribution with mean $\boldsymbol{\mu}_\beta = 0$ and variance $\boldsymbol{\Sigma}_\beta = \mathbf{I}_p$.
+    \item \textbf{Random Scale Prior (\texttt{psi\_prior}):} Parameterizes the log-relative scale vector $\boldsymbol{\psi}$. Defaults to a normal distribution with mean $\boldsymbol{\mu}_\psi = 0$ and standard deviation $\boldsymbol{\sigma}_\psi = 1$.
+    \item \textbf{Correlation Matrix Prior (\texttt{re\_corr\_prior}):} Specifies the off-diagonal elements of the random effects correlation matrix. Defaults to an LKJ prior with shape parameter $\eta = 1$, representing a uniform distribution over valid correlation matrices.
+    \item \textbf{Residual Variance Prior (\texttt{s2\_prior}):} Defaults to an Inverse-Gamma distribution with shape $a = 1$ and scale $b = 1$. This prior is ignored for non-Gaussian families.
+\end{itemize}
+When executing numerical optimization (\texttt{method = "normal"}), practitioners can supply an entirely custom log-density \texttt{R} \texttt{function()} to any prior input to evaluate advanced regularized penalties, while Stan and Importance Sampling remain bounded to structured lists to secure successful runtime compilation.
+
+% =========================================================================
+% SECTION 4: SOFTWARE USAGE AND ILLUSTRATIVE EXAMPLES
+% =========================================================================
+\section{Software Usage and Illustrative Examples}
+
+To demonstrate the usability, structural flexibility, and syntactic uniformity of the \texttt{NetReg} package, we provide a complete, self-contained reproducible example. We simulate a synthetic network topology and node-level variables to show how easily a researcher can estimate each of the specialized structural specifications implemented in the software catalog.
+
+\subsection{Data Generation and Setup}
+We begin by generating a small connected network using an Erdős-Rényi random graph structure and embedding node-level attributes directly into an \texttt{igraph} object. This allows us to demonstrate how \texttt{NetReg}'s automated hybrid variable scavenger engine can parse variables from any source without out-of-loop conversions.
+
+\begin{verbatim}
+library(NetReg)
+library(igraph)
+
+# Set seed for perfect reproducibility
+set.seed(123)
+
+# 1. Generate a network structure (n = 50 nodes)
+n <- 50
+g <- erdos.renyi.game(n, p = 0.15, directed = FALSE)
+V(g)$name <- paste0("Node_", 1:n)
+
+# 2. Add vertex-level covariates and simulated response outcomes
+V(g)$x1 <- runif(n, -2, 2)
+V(g)$x2 <- rnorm(n, mean = 0, sd = 1)
+V(g)$w1 <- rnorm(n, mean = 1, sd = 0.5) % Covariate for susceptibility
+
+# Baseline expected value with an intrinsic linear intercept
+y_true  <- 1.5 + 0.8 * V(g)$x1 - 1.2 * V(g)$x2 + rnorm(n, 0, 0.5)
+V(g)$y  <- as.numeric(y_true)
+
+% Convert to adjacency structure matrices for pre-split demonstrations
+conv <- convert_adjacency(g)
+A <- conv$A
+mydat <- conv$df
+\end{verbatim}
+
+\subsection{Model Estimation Sequence}
+The following blocks illustrate many of the usability features of the \texttt{NetReg} package through each of the different model possibilities.
+
+\subsubsection{Network Effects Model (NEM) and Network Disturbances Model (NDM)}
+We fit the foundational models using standard formula designs. Here, we highlight the hybrid data scavenger engine: by passing the raw \texttt{igraph} object directly to the required \texttt{network} argument, the package automatically extracts both the adjacency matrix and the network node attributes into a clean modeling data frame.
+\begin{verbatim}
+# Estimate NEM via Importance Sampling using raw matrices
+fit_nem <- nem(formula = y ~ x1 + x2,
+               data    = mydat,
+               network = A,
+               method  = "is",
+               rownorm = TRUE)
+
+# Estimate NDM via Normal Approximation, finding attributes from the igraph
+fit_ndm <- ndm(formula = y ~ x1 + x2,
+               data    = NULL, # Data is automatically scavenged from network object
+               network = g,    % Required network object passed as an igraph container
+               method  = "normal",
+               rownorm = TRUE)
+\end{verbatim}
+
+\subsubsection{Heterogeneous Susceptibilities Model (HS)}
+We relax the global network parameter constraint to allow for individualized node responsiveness. Using the \texttt{W\_formula} argument, we define which specific actor attributes modulate an individual's susceptibility, and map a custom prior density evaluating the fixed slopes.
+\begin{verbatim}
+# Custom beta prior
+custom_beta_func <- function(beta){
+    sum(dnorm(beta, mean = 0, sd = 10, log = TRUE))
+}
+
+# Estimate HS effects where node susceptibility is a function of w1
+fit_hs <- hs_effects(formula   = y ~ x1 + x2,
+                     W_formula = ~ w1,
+                     data      = mydat,
+                     network   = A,
+                     method    = "normal",
+                     beta_prior = custom_beta_func)
+
+
+# Estimate HS disturbances where node susceptibility is a function of all covariates
+fit_hs <- hs_effects(formula   = y ~ x1 + x2,
+                     W_formula = NULL, % Automatically uses all covariates
+                     data      = mydat,
+                     network   = A,
+                     method    = "normal",
+                     beta_prior = custom_beta_func)
+\end{verbatim}
+\subsubsection{Network Autocorrelation Model with Egocentric Data}
+We execute an egocentric network specification. By passing a logical indexing vector to \texttt{is\_ego}, \texttt{NetReg} automatically partitions the global adjacency matrix and data frames into ego-to-ego and ego-to-alter blocks conformably behind the scenes.
+\begin{verbatim}
+# Create a logical index vector marking a subset of 15 egos
+ego_index <- rep(FALSE, n); ego_index[1:15] <- TRUE
+
+# Estimate Egocentric Autocorrelation with an automated internal data split
+fit_ego <- ego_nem(formula     = y ~ x1 + x2,
+                   data_e      = mydat, # Uses is_ego to partition the data
+                   data_a      = NULL,  % Default. Not needed since is_ego supplied
+                   network     = A,     % Global consolidated network matrix
+                   network_ea  = NULL,  % Default. Not needed since is_ego supplied
+                   is_ego      = ego_index,
+                   method      = "stan",
+                   alpha_prior = list(mean = 0, sigma = 100)) % Spherical prior
+
+
+# Estimate Egocentric Autocorrelation without an automated internal data split
+A_e <- A[ego_index, ego_index]
+A_ea <- A[ego_index, !ego_index]
+mydat_e <- mydat[ego_index,]
+mydat_a <- mydat[!ego_index,]
+fit_ego := ego_ndm(formula     = y ~ x1 + x2,
+                   data_e      = mydat_e, # Pre-partitioned now to just egos
+                   data_a      = mydat_a, # Partitioned for just alters
+                   network     = A_e,     % Global consolidated network matrix
+                   network_ea  = A_ea,    % Partitioned for egos to alters
+                   is_ego      = NULL,    % Not needed since partitioned data supplied
+                   method      = "normal",
+                   alpha_prior = list(mean = 0, sigma = 100)) % Spherical prior
+\end{verbatim}
+
+\subsubsection{Homophily-Adjusted Specifications (HANE \& HAND)}
+Here, we highlight the package's flexible latent space prior parameters. By setting \texttt{U\_prior = NULL}, the internal engine automatically extracts spatial embeddings using adjacency spectral decomposition and approximates the required Matrix-Normal prior layout.
+\begin{verbatim}
+# Estimate HANE using automated spectral latent coordinates fallback
+fit_hane <- hane(formula = y ~ x1 + x2,
+                 network = g,
+                 method  = "stan",
+                 U_prior = NULL) % Triggers Matrix-Normal spectral fallback
+\end{verbatim}
+
+\subsubsection{Network Moderated Regression (NMR)}
+Finally, we execute our network moderated regression framework. We demonstrate a count-based Poisson family specification, automate community group assignment via label propagation, and deploy a one-sided \texttt{moderated\_formula} to expand and test our random scale parameters.
+\begin{verbatim}
+# Generate a count outcome vector matching Poisson assumptions
+V(g)$y_count <- rpois(n, lambda = exp(0.5 * V(g)$x1))
+
+# Estimate a Count-Based Network Moderated Regression via Stan MCMC
+fit_nmr <- nmr(formula           = y_count ~ x1 + x2,
+               moderated_formula = ~ x1, # Moderates x1 slopes via community
+               network           = g,
+               family            = "poisson",
+               method            = "stan",
+               communities       = NULL, # Automates label propagation partitioning
+               test              = TRUE) % Computes Bayes Factors skipping intercept
+\end{verbatim}
+\subsection{Inference and Object Extraction}
+Every object returned by the catalog functions inherits a descriptive primary class designator alongside a shared, master \texttt{"netreg"} sub-class identifier. This ensures that metrics extractions behave uniformly. Executing a \texttt{summary()} call on an object yields a standardized print engine layout. For example, summarizing our importance-sampled network effects model outputs the following console display:
+
+\begin{verbatim}
+summary(fit_nem)
+
+Summary of Network Analysis Model
+Model Type: effects | Estimation Method: is
+
+Call:
+nem(formula = y ~ x1 + x2, data = mydat, network = A, method = "is",
+    rownorm = TRUE)
+
+Parameter Estimates and Intervals:
+            Estimate    2.5%   97.5%
+(Intercept)   1.5158  1.1526  1.8769
+x1            0.7865  0.6664  0.9056
+x2           -1.1868 -1.3207 -1.0539
+sigma2        0.2579  0.1741  0.3726
+rho          -0.0625 -0.3069  0.1807
+
+Model Fit Statistics:
+Log-Likelihood:  -31.5734
+Log-Posterior:   -38.1729
+\end{verbatim}
+
+
+% =========================================================================
+% SECTION 5: CONCLUSION
+% =========================================================================
+\section{Conclusion}
+
+
+\subsection{Conclusion and Future Extensions}
+The \texttt{NetReg} package bridges a longstanding gap in the statistical software ecosystem by introducing a unified computational framework for network linear regression models. By adhering closely to standard \texttt{R} modeling conventions and providing an intuitive formula interface, the package removes the implementation barriers that historically forced researchers to choose between unoptimized replication scripts or simpler, independent models. The automated data processing supports five commonly used network formats, normalization utilities, and node attribute harvesting which all significantly reduce data-cleaning work for researchers across diverse scientific fields.
+
+Expanding on \texttt{NetReg} in the future will require minimal work. If it is of interest to include a new network regression method to the package, the required change to existing code will be minute; at most an additional else/if statement along with updating any help documentation. Thus, \texttt{NetReg} is robust and available to grow as the field of network statistics grows. \texttt{NetReg} provides a statistically diverse and functionally simple interface for network-based regression within the \texttt{R} environment.
+
+\end{document}
+

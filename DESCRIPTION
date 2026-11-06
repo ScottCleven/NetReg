@@ -1,0 +1,12 @@
+Package: NetReg
+Type: Package
+Title: Network Moderated Regression Models
+Version: 0.1.0
+Author: Scott Cleven [aut, cre]
+Maintainer: Scott Cleven <scottcleven27@gmail.com>
+Description: Implements network moderated regression modeling frameworks.
+License: GPL (>= 3)
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+Config/roxygen2/version: 8.1.1
